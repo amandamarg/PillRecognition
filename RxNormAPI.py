@@ -32,6 +32,35 @@ def getNDCProps(codes):
     return codes.map(lambda x: makeCall('ndcproperties.json', query='?id=' + x))
 
 
+'''
+takes in properties from api call and returns parsed version
+if propNames is empty, will get all properties, otherwise just gets properties specified
+'''
+def parseProps(props, propNames=[]):
+    propConcepts = props['propertyConceptList.propertyConcept']
+    makePropTuple = lambda x: (x['propName'], x['propValue'])
+    propConcepts = propConcepts.map(lambda x: dict(map(makePropTuple, x)), na_action='ignore')
+    parsed = pd.json_normalize(propConcepts.values)
+    parsed.index = props['ndc10']
+    parsed = parsed.drop_duplicates()
+    if len(propNames) != 0:
+        parsed = parsed.get(propNames).drop_duplicates()
+    return parsed
+
 if __name__ == "__main__":
-    products = getPillProducts()
-    properties = getNDCProps(products['rxcui'])
+    #check if RxNorm_properties.json and if not, then create it
+    if not os.path.exists('./RxNorm_properties.json'):
+        products = getPillProducts()
+        properties = getNDCProps(products['rxcui'])
+        properties = pd.json_normalize(pd.json_normalize(properties)['ndcPropertyList.ndcProperty'].explode())
+        properties.to_json('RxNorm_properties.json')
+    else:
+        properties = pd.read_json('RxNorm_properties.json')
+
+    #parse properties to get just values associated with color, shape, size, and imprints and then save in file called parsedProperties.json
+    parsedProperties = parseProps(properties, ['COLOR', 'SHAPE', 'SIZE', 'IMPRINT_CODE'])
+    parsedProperties.to_json('./parsedProperties.json')
+
+    
+    
+
