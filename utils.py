@@ -44,9 +44,59 @@ def addDatasetConfigs(dataset_type, dataset_name, root_path, yaml_path):
     file.close()    
 
 
-
 def log(log_file_path, content, overwrite=False):
     mode = 'w' if overwrite else 'a'
     with open(log_file_path, mode) as log_file:
         log_file.write(content + '\n')
     log_file.close()
+
+
+
+
+''' 
+Checks that the numeric label in each label file in file_paths corresponds to mapping represented by semantic_labels
+** Note: requires that the semantic label must be able to be parsed from the label file name/path using semantic_label_parser **
+
+
+semantic_labels: a list of semantic labels ordered such that the index of each label corresponds to its numeric label equivelant
+file_paths: a list of file_paths to labels 
+    *each file in file_paths contains  only one label corresponding to a single instance of a single
+    *labels are formatted with the numeric label first and the segmentation label second, seperated by a single space
+semantic_label_parser: a function that parses semantic label from path in file_path
+log_change: if True then function will log any changes made to log_file_path. default True. 
+log_file_path: path to file where changes will be logged if log_change is True. Ignored if log_change is False. default './log_changes.txt'. 
+overwrite: if True and then overwrites file at log_file_path with header and any changes, otherwise will just append any new changes without overwriting existing file. Ignored if log_change is False. default True.
+'''
+
+def checkLabelMapping(semantic_labels, file_paths, semantic_label_parser, log_change, log_file_path, overwrite):
+        
+    if log_change and overwrite:
+        #clears change log and writes header to change log
+        log(log_file_path, "file,original content,updated content", overwrite=True)
+
+    for path in file_paths:
+        semantic_label = semantic_label_parser(path)
+        idx = semantic_labels.index(semantic_label)
+
+        #reads in file data
+        with open(path, 'r') as file:
+            content = file.read()
+        file.close()
+        data = content.split(' ')
+        numeric_label = data[0]
+
+        #checks if numeric label in lable file matchs the semantic_label index and if not, overwrites 
+        if numeric_label != str(idx):
+            data[0] = str(idx)
+            updated_content = (' ').join(data)
+
+            #overwrites file with updated class
+            with open(path, 'w') as file:
+                file.write(updated_content)
+            file.close()
+
+            #logs change
+            if log_change:
+                log_data = (',').join([path, content, updated_content])
+                log(log_file_path, log_data)
+            
