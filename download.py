@@ -8,7 +8,7 @@ from roboflow import Roboflow
 from sklearn.model_selection import train_test_split
 import os
 import yaml
-from utils import addDatasetConfigs, log, labels_match
+from utils import addToDatasets, log, labels_match
 import glob
 import re
 
@@ -22,6 +22,12 @@ def unzipFile(file, unzipTo):
         zip.extractall(unzipTo)
     zip.close()
 
+
+'''
+downloads dip file from link to path
+if keepZipped is True, then won't unzip file
+othewise will unzip file contents
+'''
 def downloadZip(link, path='./', keepZipped = False):
     user_agent = {"User-agent": 'Mozilla/5.0'}
     response = requests.get(link, headers=user_agent)
@@ -127,7 +133,7 @@ def downloadTaiwanPillDataset():
         yaml.safe_dump(data, file, sort_keys=False)
     file.close()
 
-    addDatasetConfigs('segmentation', 'taiwan_pills', dataset_path, dataset_path + '/data.yaml')
+    addToDatasets('seg', 'taiwan_pills', dataset_path, dataset_path + '/data.yaml')
 
 
 '''
@@ -171,8 +177,7 @@ def download_ogyeiv2_dataset():
     file.close()
 
     #add to dataset_configs.json
-    addDatasetConfigs('segmentation', 'ogyeiv2', dataset_path, dataset_path + '/data.yaml')
-
+    addToDatasets('seg', 'ogyeiv2', dataset_path, dataset_path + '/data.yaml')
 
 
 if __name__ == "__main__":

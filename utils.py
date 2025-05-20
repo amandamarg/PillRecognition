@@ -1,7 +1,8 @@
 import pandas as pd
 import cv2
 import json
-
+from jsonschema import validate
+import ultralytics
 
 def readLabelsObjDetect(path):
     with open(path, 'r') as f:
@@ -33,18 +34,25 @@ def drawBoundingBoxes(img, labels):
     return img_with_boxes
 
 
-def addDatasetConfigs(dataset_type, dataset_name, root_path, yaml_path):
-    with open('./datasets_configs.json', 'r') as file:
+'''
+adds dataset info to datasets.json
+'''
+def addToDatasets(label_type, dataset_name, root_path, yaml_path):
+    with open('./datasets.json', 'r') as file:
         data = json.loads(file.read())
     file.close()
 
-    data[dataset_type][dataset_name] = {'root_path': root_path, 'yaml_path': yaml_path}
+    data[dataset_name] = {'root_path': root_path, 'yaml_path': yaml_path, 'label_type': label_type}
 
-    with open('./datasets_configs.json', 'w') as file:
+    with open('./datasets.json', 'w') as file:
         json.dump(data, file)
     file.close()    
 
 
+'''
+logs content into file at log_file_path
+if overwrite is Ture, overwrites file if it exists, otherwise just appends 
+'''
 def log(log_file_path, content, overwrite=False):
     mode = 'w' if overwrite else 'a'
     with open(log_file_path, mode) as log_file:
@@ -90,3 +98,22 @@ def labels_match(file_path, class_labels, fix=True, log_change=True, log_file_pa
             log(log_file_path, log_data)
     return False
 
+'''
+validates a json object against a schema
+
+instance is either an instance of a json object or a path to a json file
+    * if instance is a file_path, then will return contents of file as json object
+schema_file_path is a path to a json schema
+'''
+def validateJSON(instance, schema_file_path):
+    with open(schema_file_path, 'r') as file:
+        schema = json.load(file)
+    file.close()
+    if isinstance(instance, str):
+        with open(instance, 'r') as file:
+            json_obj = json.load(file)
+        file.close()
+        validate(instance=json_obj, schema=schema)
+        return json_obj
+    else:
+        validate(instance=instance, schema=schema)

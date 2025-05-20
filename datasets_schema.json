@@ -1,0 +1,30 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Dataset",
+    "$defs": {
+        "dataset": {
+            "type": "object",
+            "properties": {
+                    "root_path": {
+                    "type": "string",
+                    "description": "root path to dataset"
+                },
+                "yaml_path": {
+                    "type": "string",
+                    "description": "path to yaml file"
+                },
+                "label_type": {
+                    "type": "string",
+                    "description": "describes whether labels are segmentation (seg) labels or bounding box (bbox) labels",
+                    "enum": ["seg", "bbox"]
+                }
+            },
+            "required": ["root_path", "yaml_path", "label_type"]
+        }
+    },
+    "type": "object",
+    "properties": {},
+    "additionalProperties": {
+        "$ref": "#/$defs/dataset"
+    }
+}
