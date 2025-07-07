@@ -50,14 +50,23 @@ class SPL_Terms:
 
     def translateColorCode(self, spl_codes):
         if not spl_codes:
-            return []
-        return [self.color.loc[c]["name"] for c in spl_codes]
+            return None
+        elif isinstance(spl_codes, list):
+            return [self.color.loc[c]["name"] if c in self.color.index else c for c in spl_codes]
+        elif spl_codes in self.color.index:
+            return self.color.loc[spl_codes]["name"]
+        else:
+            return spl_codes
     
     def translateShapeCode(self, spl_codes):
         if not spl_codes:
-            return []
-        return [self.shape.loc[c]["name"] for c in spl_codes]
-
+            return None
+        elif isinstance(spl_codes, list):
+            return [self.shape.loc[c]["name"] if c in self.shape.index else c for c in spl_codes]
+        elif spl_codes in self.shape.index:
+            return self.shape.loc[spl_codes]["name"]
+        else:
+            return spl_codes
 
 
 def kmeans_elbow_plot(encodings, start_k, max_k=None, plot_clusters=False):
@@ -79,7 +88,8 @@ def kmeans_elbow_plot(encodings, start_k, max_k=None, plot_clusters=False):
     plt.savefig("elbow_plot.png")
     plt.show()
 
-def plotByShape(df, ax, title="Shape"):
+def plotByShape(df, ax, spl_terms, title="Shape"):
+    colors = list(mpl.colors.XKCD_COLORS.keys())
     for i, group in enumerate(df.groupby("SHAPE", dropna=False)):
         if pd.notna(group[0]):
             shape = spl_terms.translateShapeCode(group[0])
@@ -90,7 +100,7 @@ def plotByShape(df, ax, title="Shape"):
         ax.legend(bbox_to_anchor=(1.05, 1), fontsize=6)
         ax.set_title(title)
 
-def plotByColor(df, ax, title="Color"):
+def plotByColor(df, ax, spl_terms, title="Color"):
     for group in df.groupby("COLOR", dropna=False):
         if pd.notna(group[0]):
             color = spl_terms.translateColorCode(group[0].split(";"))
@@ -109,9 +119,9 @@ def plotIndividualClusters(df, k):
     kmeans = KMeans(n_clusters=k, random_state=0)
     labels = kmeans.fit_predict(np.stack(df["2D_encoding"].values))
     center = kmeans.cluster_centers_
-    rand_sample['center_num'] = labels
+    df['center_num'] = labels
     os.makedirs("./k="+str(k), exist_ok=True)
-    for i,group in enumerate(rand_sample.groupby('center_num')):
+    for i,group in enumerate(df.groupby('center_num')):
         center_coord = center[group[0]]
         fig, ax = plt.subplots(2)
         fig.tight_layout(pad=2)
@@ -121,9 +131,9 @@ def plotIndividualClusters(df, k):
         plotByColor(group[1], ax[0], spl_terms)
         plotByShape(group[1], ax[1], spl_terms)
         fig.suptitle("Cluster " + str(i))
-        fig.savefig("./k=" + str(k) +"/cluster=" + str(i))
+        fig.savefig("./k=" + str(k) +"/cluster=" + str(i) + ".png")
 
-def main(df, overwrite=True):
+def main(df, opt_k=None, overwrite=True):
     #initalize model
     model = resnet50(weights=ResNet50_Weights.DEFAULT)
 
@@ -144,42 +154,10 @@ def main(df, overwrite=True):
     pca = PCA(2)
     df["2D_encoding"] = pca.fit_transform(encodings).tolist()
 
-    #plot 2D encodings with corresponding color/colors
-    spl_terms = SPL_Terms()
-    for group in df.groupby("COLOR"):
-        if pd.notna(group[0]):
-            color = spl_terms.translateColorCode(group[0].split(";"))
-            marker_style = {'marker':'o', 'markersize':10, 'color':color[0], 'markeredgecolor':'black'}
-            if len(color) > 1:
-                marker_style['fillstyle']='left'
-                marker_style['markerfacecoloralt']=color[1]
-        else:
-            marker_style= {'marker':'.', 'markersize':10, 'color':'black'}
-        data = np.stack(group[1]["2D_encoding"].values)
-        plt.plot(data[:,0], data[:,1], linestyle="None", **marker_style)
-    plt.title("2D Image Encodings Color") 
-    plt.savefig("./2D_Image_Encodings_Color.png")
-    plt.close()
-
-
-    #plot 2D encodings with corresponding shape
-    for group in df.groupby("SHAPE"):
-        if pd.notna(group[0]):
-            color = spl_terms.translateColorCode(group[0].split(";"))
-            marker_style = {'marker':'o', 'markersize':10, 'color':color[0], 'markeredgecolor':'black'}
-            if len(color) > 1:
-                marker_style['fillstyle']='left'
-                marker_style['markerfacecoloralt']=color[1]
-        else:
-            marker_style= {'marker':'.', 'markersize':10, 'color':'black'}
-        data = np.stack(group[1]["2D_encoding"].values)
-        plt.plot(data[:,0], data[:,1], linestyle="None", **marker_style)
-    plt.title("2D Image Encodings") 
-    plt.savefig("./2D_Image_Encodings_Shape.png")
-    plt.close()
-
     kmeans_elbow_plot(np.stack(df["2D_encoding"].values), start_k=1, max_k=10, plot_clusters=True)
 
+    if opt_k:
+        plotIndividualClusters(df, opt_k)
     
 
 if __name__ == "__main__":
@@ -194,4 +172,5 @@ if __name__ == "__main__":
     all_labels = all_labels.join(properties, on="NDC", how="left")
     segmented_nih_pills = all_labels[all_labels["image_path"].str.startswith("segmented_nih_pills_224")]
 
-    main(segmented_nih_pills[0:100])
+    sample = segmented_nih_pills.iloc[0:100]
+    main(sample, opt_k=5)
