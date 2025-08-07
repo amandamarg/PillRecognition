@@ -3,6 +3,12 @@ import cv2
 import json
 from jsonschema import validate
 import ultralytics
+from torch.utils.data import Dataset
+from PIL import Image
+import numpy as np 
+from sklearn.preprocessing import LabelEncoder
+from glob import glob
+import os
 
 def readLabelsObjDetect(path):
     with open(path, 'r') as f:
@@ -117,3 +123,107 @@ def validateJSON(instance, schema_file_path):
         return json_obj
     else:
         validate(instance=instance, schema=schema)
+
+
+def zeroPadFront(x, desiredLength):
+    x = str(x)
+    while len(x) < desiredLength:
+        x = '0' + x
+    return x
+
+def get_terminology(list_name):
+    return pd.read_xml("./terminology_lists/" + list_name, iterparse={"choice": ["label", "value"]}, names=["name", "code"])
+
+def getNormalizeTransform(x):
+    images = np.stack(x.map(Image.open))
+    mean = np.mean(images, axis=(0,1,2))
+    std = np.std(images, axis=(0,1,2))
+    return transforms.Normalize(mean, std)
+    
+
+ 
+class PillDataset(Dataset):
+    def __init__(self, image_paths, labels, transform=None, target_transform=None):
+        self.img_paths = image_paths
+        self.labels = labels
+        self.transform = transform
+        self.target_transform = target_transform
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        image_path = (self.img_paths.iloc[idx])
+        image = Image.open(image_path)
+        label = self.labels.iloc[idx]
+        if self.transform:
+            image = self.transform(image)
+        if self.target_transform:
+            label = self.target_transform(label)
+        return image, label
+    
+def load_epillid(data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata', path_to_folds = 'folds/pilltypeid_nih_sidelbls0.01_metric_5folds/base', train_with_side_labels = True, encode_labels=True):
+    data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata'
+    csv_files = glob(os.path.join(data_root_dir, path_to_folds, '*.csv'))
+
+    all_imgs_csv = [x for x in csv_files if x.endswith("all.csv")][0]
+    csv_files = sorted([x for x in csv_files if not x.endswith("all.csv")])
+    test_imgs_csv = csv_files.pop(-1)
+    val_imgs_csv = csv_files.pop(-1)
+
+    all_images_df = pd.read_csv(all_imgs_csv)
+    val_df = pd.read_csv(val_imgs_csv)
+    test_df = pd.read_csv(test_imgs_csv)
+
+    img_dir = 'classification_data'
+    for df in [all_images_df, val_df, test_df]:
+        df['image_path'] = df['image_path'].apply(lambda x: os.path.join(data_root_dir, img_dir, x))
+
+    if train_with_side_labels:
+        all_images_df['label'] = all_images_df.apply(lambda x: x['label'] + '_' + ('0' if x.is_front else '1'), axis=1)
+        val_df['label'] = val_df.apply(lambda x: x['label'] + '_' + ('0' if x.is_front else '1'), axis=1)
+        test_df['label'] = test_df.apply(lambda x: x['label'] + '_' + ('0' if x.is_front else '1'), axis=1)
+
+    if encode_labels:
+        label_encoder = LabelEncoder().fit(all_images_df.label)
+        all_images_df['encoded_label'] = label_encoder.transform(all_images_df.label)
+        val_df['encoded_label'] = label_encoder.transform(val_df.label)
+        test_df['encoded_label'] = label_encoder.transform(test_df.label)
+
+    val_test_image_paths = list(val_df['image_path'].values) + list(test_df['image_path'].values)
+    train_df = all_images_df[~all_images_df['image_path'].isin(val_test_image_paths)]
+
+    return {'train': train_df, 'val': val_df, 'test': test_df}
+
+
+from itertools import combinations
+
+def generate_positive_pairs(df, labelcol="pilltype_id", enforce_ref_cons=True, enforce_same_side=True, side=None):
+    '''
+    enforce_ref_cons=True will return only pairs with exactly one reference image and one consumer image
+    enforce_same_side=True will return only pairs where both images in the pair are the same side
+    side can be one of ['front', 'back', None], and if not None, will return just the pairs corresponding to the side that is passed.
+    Note: if side is not None, will override enforce_same_side and return only same-sided pairs for that side.
+    '''
+
+    df_copy = df.copy().reset_index()
+    indicies = df_copy.index.values
+    pairs = np.array(list(combinations(indicies, 2)))
+    pairs = pairs[np.equal(df_copy.iloc[pairs[:,0]][labelcol].to_numpy(), df_copy.iloc[pairs[:,1]][labelcol].to_numpy())]
+
+    assert side in ['front', 'back', None]
+
+    if side == 'front':
+        pairs = pairs[np.logical_and(df_copy.iloc[pairs[:,0]].is_front.to_numpy(), df_copy.iloc[pairs[:,1]].is_front.to_numpy())]
+    elif side == 'back':
+        pairs = pairs[np.logical_and(~df_copy.iloc[pairs[:,0]].is_front.to_numpy(), ~df_copy.iloc[pairs[:,1]].is_front.to_numpy())]
+    elif enforce_same_side:
+        front_side_pairs = np.logical_and(df_copy.iloc[pairs[:,0]].is_front.to_numpy(), df_copy.iloc[pairs[:,1]].is_front.to_numpy())
+        back_side_pairs = np.logical_and(~df_copy.iloc[pairs[:,0]].is_front.to_numpy(), ~df_copy.iloc[pairs[:,1]].is_front.to_numpy())        
+        pairs = pairs[np.logical_or(front_side_pairs, back_side_pairs)]
+
+    if enforce_ref_cons:
+        pairs = pairs[np.logical_xor(df_copy.iloc[pairs[:,0]].is_ref.to_numpy(), df_copy.iloc[pairs[:,1]].is_ref.to_numpy())]
+    
+    return pairs
+    
