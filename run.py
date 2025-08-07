@@ -18,28 +18,11 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import top_k_accuracy_score
 import copy
 
-'''
-Steps:
-
-1) Read in all data
-2) Encode labels
-    * need to decide whether to treat front and back images as single class or seperate class and split accordingly
-3) Split data
-    * training data should have at least two images per class per side so that we can generate triplet
-    * should training have all reference images for each class?
-4) Load splits into dataset
-5) For each epoch
-    a) generate mini-batches
-        * for each batch, we need to make sure that there are valid triplets in the batch, which we do using method in https://challengeenthusiast.com/training-a-siamese-model-with-a-triplet-loss-function-on-mnist-dataset-using-pytorch-225908e59bda
-        * basically, we generate pairs of same-class images and then each mini batch has only one pair per class/subset of classes
-    b) iterate through mini-batches
-        * get embeddings
-        * mine triplets
-        * get loss
-        * if training, take optimizer step
-    c) take scheduler step
-
-'''
+def get_total_loss(losses, weights):
+    total_loss = 0.0
+    for k,v in losses.items():
+        total_loss += (v * weights[k])
+    return total_loss
 
 def load_epillid(data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata', path_to_folds = 'folds/pilltypeid_nih_sidelbls0.01_metric_5folds/base', labelcol = 'label', train_with_side_labels = True, encode_labels = True):
     data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata'
@@ -75,6 +58,17 @@ def load_epillid(data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata
     train_df = all_images_df[~all_images_df['image_path'].isin(val_test_image_paths)]
 
     return {'train': train_df, 'val': val_df, 'test': test_df}, n_classes
+
+
+class Classifier(nn.Module):
+    def __init__(self, input_size, output_size, scaler=1.0):
+        super(Classifier, self).__init__()
+        self.fc = nn.Sequential(nn.Linear(input_size, output_size))
+        self.scaler = scaler
+    
+    def forward(self, input):
+        normalized_input = nn.functional.normalize(input, 2, dim=1)
+        return self.fc(normalized_input * self.scaler)
 
 class PillImages(Dataset):
     def __init__(self, df, phase, transform=None, augment=None, labelcol="pilltype_id", label_encoder=None):
@@ -141,29 +135,41 @@ class CustomBatchSamplerPillID(BatchSampler):
     def __len__(self):
         return len(self.df)//self.batch_size
 
-def train_epoch(dataloader, device, models, miner, loss_funcs, optimizers, loss_dict, clip_gradients=True):
-    embedding_losses = []
-    classification_losses = []
+def train_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, optimizers, loss_dict, clip_gradients=True):
+    
     embedding_model.train()
     classifier.train()
-    for data in tqdm(dataloader, total=len(dataloader)):
-        imgs = data[0].to(device)
-        labels = data[1].to(device)
 
-        optimizers['embedding'].zero_grad()
-        optimizers['classifier'].zero_grad()
-        with torch.set_grad_enabled(True):
+    running_loss = {'embedding': 0.0, 'classifier': 0.0, 'total': 0.0}
+    curr_loss = {'embedding': 0.0, 'classifier': 0.0}
+
+    num_batches = 0
+    with torch.set_grad_enabled(True):
+        for data in tqdm(dataloader, total=len(dataloader)):
+            num_batches += 1
+
+            imgs = data[0].to(device)
+            labels = data[1].to(device)
+
+            optimizers['embedding'].zero_grad()
+            optimizers['classifier'].zero_grad()
+
             embeddings = models['embedding'](imgs)
             mined_output = miner(embeddings, labels)
-            embedding_loss = loss_funcs['embedding'](embeddings, labels, mined_output)
-            embedding_losses.append(embedding_loss)
+            curr_loss['embedding'] = loss_funcs['embedding'](embeddings, labels, mined_output)
+            running_loss['embedding'] += curr_loss['embedding']
 
+            
             logits = models['classifier'](embeddings)
-            classification_loss = loss_funcs['classifier'](logits, labels)
-            classification_losses.append(classification_loss)
+            curr_loss['classifier'] = loss_funcs['classifier'](logits, labels)
+            running_loss['classifier'] += curr_loss['classifier']
+
+            total_loss = get_total_loss(curr_loss, loss_weights)
+            total_loss.backward()
+
+            running_loss['total'] += total_loss
+
             #TODO: compute metrics
-            embedding_loss.loss_backward()
-            classification_loss.backward()
 
             if clip_gradients:
                 nn.utils.clip_grad_norm_(models['embedding'].parameters(), 1.)
@@ -171,57 +177,60 @@ def train_epoch(dataloader, device, models, miner, loss_funcs, optimizers, loss_
                 
             optimizers['embedding'].step()
             optimizers['classifier'].step()
-    loss_dict['embedding'].append(np.average(embedding_losses))
-    loss_dict['classifier'].append(np.average(classification_losses))
+
+    for k, v in running_loss.items():
+        loss_dict[k].append(v/num_batches)
+        
     return
 
-def val_epoch(dataloader, device, models, miner, loss_funcs, loss_dict):
-    embedding_losses = []
-    classification_losses = []
+def val_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, loss_dict):
+
     embedding_model.eval()
     classifier.eval()
-    for data in tqdm(dataloader, total=len(dataloader)):
-        imgs = data[0].to(device)
-        labels = data[1].to(device)
-        with torch.set_grad_enabled(False):
+
+    running_loss = {'embedding': 0.0, 'classifier': 0.0, 'total': 0.0}
+    curr_loss = {'embedding': 0.0, 'classifier': 0.0}
+
+    num_batches = 0
+    with torch.set_grad_enabled(False):
+        for data in tqdm(dataloader, total=len(dataloader)):
+            num_batches += 1
+
+            imgs = data[0].to(device)
+            labels = data[1].to(device)
+
             embeddings = models['embedding'](imgs)
             mined_output = miner(embeddings, labels)
-            embedding_loss = loss_funcs['embedding'](embeddings, labels, mined_output)
-            embedding_losses.append(embedding_loss)
+            curr_loss['embedding'] = loss_funcs['embedding'](embeddings, labels, mined_output)
+            running_loss['embedding'] += curr_loss['embedding']
 
             logits = models['classifier'](embeddings)
-            classification_loss = loss_funcs['classifier'](logits, labels)
-            classification_losses.append(classification_loss)
-            #TODO: compute metrics
-    loss_dict['embedding'].append(np.average(embedding_losses))
-    loss_dict['classifier'].append(np.average(classification_losses))
+            curr_loss['classifier'] = loss_funcs['classifier'](logits, labels)
+            running_loss['classifier'] += curr_loss['classifier']
+
+            running_loss['total'] += get_total_loss(curr_loss, loss_weights)
+    
+    for k, v in running_loss.items():
+        loss_dict[k].append(v/num_batches)
+        
     return
 
-def train(models, dataloaders, num_epochs, device,  miner, loss_funcs, optimizers, lr_schedulers):
+def train(models, dataloaders, num_epochs, device,  miner, loss_funcs, loss_weights, optimizers, lr_scheduler):
     models["embedding"].to(device)
     models["classifier"].to(device)
 
-    train_loss_avgs = {"embedding": [], "classifier": []}
-    val_loss_avgs = {"embedding": [], "classifier": []}
+    train_loss_avgs = {"embedding": [], "classifier": [], "total": []}
+    val_loss_avgs = {"embedding": [], "classifier": [], "total": []}
 
     for i in range(num_epochs):
         print("Training Epoch {:d}...".format(i))
-        train_epoch(dataloaders["train"], device, models, miner, loss_funcs, optimizers, train_loss_avgs)
-        print("Training loss: embedding_model_loss={:f}, classifier_loss={:f}".format(train_loss_avgs["embedding"], train_loss_avgs["classifier"]))
-        val_epoch(dataloaders["val"], device, models, miner, loss_funcs, val_loss_avgs)
-        print("Validation loss: embedding_model_loss={:f}, classifier_loss={:f}".format(val_loss_avgs["embedding"], val_loss_avgs["classifier"]))
-        lr_schedulers["embedding"].step(val_loss_avgs["embedding"])
-        lr_schedulers["classifier"].step(val_loss_avgs["classifier"])
-    
-class Classifier(nn.Module):
-    def __init__(self, input_size, output_size):
-        super(Classifier, self).__init__()
-        self.fc = nn.Sequential(nn.Linear(input_size, output_size))
-    
-    def forward(self, input):
-        distances = torch.norm(input, 2, dim=1, keepdim=True)
-        return self.fc(torch.div(input,distances))
-
+        train_epoch(dataloaders["train"], device, models, miner, loss_funcs, loss_weights, optimizers, train_loss_avgs)
+        print("Training loss: embedding_model_loss={:f}, classifier_loss={:f}, total={:f}".format(train_loss_avgs["embedding"][-1], train_loss_avgs["classifier"][-1], train_loss_avgs["total"][-1]))
+        val_epoch(dataloaders["val"], device, models, miner, loss_funcs, loss_weights, val_loss_avgs)
+        print("Validation loss: embedding_model_loss={:f}, classifier_loss={:f}, total={:f}".format(val_loss_avgs["embedding"][-1], val_loss_avgs["classifier"][-1], val_loss_avgs["total"][-1]))
+        lr_scheduler["embedding"].step(val_loss_avgs["embedding"][-1])
+        lr_scheduler["classifier"].step(val_loss_avgs["classifier"][-1])
+        
 if __name__ == "__main__":
     df_dataset, n_classes = load_epillid()
 
@@ -229,6 +238,7 @@ if __name__ == "__main__":
     num_epochs = 1
     batch_size = 32
     device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print("Using device ", device)
 
     train_batch_sampler = CustomBatchSamplerPillID(dataset_dict['train'].df, batch_size=batch_size, labelcol='encoded_label')
     val_batch_sampler = CustomBatchSamplerPillID(dataset_dict['val'].df, batch_size=batch_size, labelcol='encoded_label')
@@ -249,13 +259,15 @@ if __name__ == "__main__":
 
     loss_funcs = {"embedding": losses.TripletMarginLoss(), "classifier": nn.CrossEntropyLoss()}
 
+    loss_weights = {"embedding": 1.0, "classifier": 1.0}
+
     optimizers = {"embedding": optim.Adam(embedding_model.parameters(), lr=0.01), "classifier": optim.Adam(classifier.parameters(), lr=0.01)}
 
     miner = miners.TripletMarginMiner(margin=0.2, type_of_triplets="hard")
 
     lr_schedulers = {"embedding": optim.lr_scheduler.ReduceLROnPlateau(optimizers["embedding"], factor=0.5, patience=2), "classifier": optim.lr_scheduler.ReduceLROnPlateau(optimizers["classifier"], factor=0.5, patience=2)}
 
-    train(models, dataloaders, num_epochs, batch_size, device,  miner, loss_funcs, optimizers, lr_schedulers)
+    train(models, dataloaders, num_epochs, device,  miner, loss_funcs, loss_weights, optimizers, lr_schedulers)
 
     # model_weights = copy.deepcopy(model.state_dict())
 
