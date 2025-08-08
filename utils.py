@@ -240,3 +240,26 @@ def true_rank(true_labels, logits):
     ordered_rankings = torch.zeros((len(unique_labels), batch_size), dtype=torch.long)
     ordered_rankings[inv_unique_labels, rank_of_true_label[:,0]] = rank_of_true_label[:,1]
     return rank_of_true_label, (unique_labels, ordered_rankings)
+
+def MRR(true_labels, logits, per_class=False):
+    assert true_labels.device.type=='cpu' and logits.device.type=='cpu'
+    batch_size, n_classes = logits.shape
+    ranked_predictions = torch.argsort(logits, dim=1, descending=True)
+    ranking_mask = (ranked_predictions == true_labels.reshape(batch_size,1).expand(batch_size, n_classes))
+    rank_of_true_label = torch.argwhere(ranking_mask)
+    reciprocal_rank = (1/rank_of_true_label[:,1])
+    if per_class:
+        unique_labels, inv_unique_labels, counts_labels = torch.unique(true_labels, return_inverse=True, return_counts=True)
+        ordered_reciprocal_rankings = torch.zeros((len(unique_labels), batch_size), dtype=torch.float)
+        ordered_reciprocal_rankings[inv_unique_labels, rank_of_true_label[:,0]] = reciprocal_rank
+        return (unique_labels, ordered_reciprocal_rankings.sum(dim=1)/counts_labels)
+    return reciprocal_rank.sum()/batch_size
+
+from sklearn.metrics import top_k_accuracy_score
+
+def get_classification_accuracy(true_labels, logits):
+    assert true_labels.device.type=='cpu' and logits.device.type=='cpu'
+    all_labels = np.arange(start=0,stop=logits.shape[1])
+    top_1_accuracy = top_k_accuracy_score(true_labels, logits, k=1, labels=all_labels)
+    top_5_accuracy = top_k_accuracy_score(true_labels, logits, k=5, labels=all_labels)
+    return top_1_accuracy, top_5_accuracy
