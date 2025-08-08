@@ -231,7 +231,7 @@ def generate_positive_pairs(df, labelcol="pilltype_id", enforce_ref_cons=True, e
 
 def true_rank(true_labels, logits):
     assert true_labels.device.type=='cpu' and logits.device.type=='cpu'
-    batch_size, n_classes = logits.size
+    batch_size, n_classes = logits.shape
     ranked_predictions = torch.argsort(logits, dim=1, descending=True)
     ranking_mask = (ranked_predictions == true_labels.reshape(batch_size,1).expand(batch_size, n_classes))
     rank_of_true_label = torch.argwhere(ranking_mask)
