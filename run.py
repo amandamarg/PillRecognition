@@ -230,7 +230,14 @@ def train(models, dataloaders, num_epochs, device,  miner, loss_funcs, loss_weig
         print("Validation loss: embedding_model_loss={:f}, classifier_loss={:f}, total={:f}".format(val_loss_avgs["embedding"][-1], val_loss_avgs["classifier"][-1], val_loss_avgs["total"][-1]))
         lr_scheduler["embedding"].step(val_loss_avgs["embedding"][-1])
         lr_scheduler["classifier"].step(val_loss_avgs["classifier"][-1])
-        
+
+def save_model(model_name, curr_epoch, save_dir = '/Users/Amanda/Desktop/PillRecognition/model'):
+    os.makedirs(os.path.join(save_dir, model_name, 'embedding'), exist_ok=True)
+    os.makedirs(os.path.join(save_dir, model_name, 'classifier'), exist_ok=True)
+
+    torch.save(models['embedding'], os.path.join(save_dir, model_name, 'embedding', 'em_epoch_{:d}.pt'.format(curr_epoch)))
+    torch.save(models['classifier'], os.path.join(save_dir, model_name, 'classifier', 'cl_epoch_{:d}.pt'.format(curr_epoch)))
+
 if __name__ == "__main__":
     df_dataset, n_classes = load_epillid()
 
@@ -269,6 +276,8 @@ if __name__ == "__main__":
 
     train(models, dataloaders, num_epochs, device,  miner, loss_funcs, loss_weights, optimizers, lr_schedulers)
 
+
+    save_model('my_model', num_epochs)
     # model_weights = copy.deepcopy(model.state_dict())
 
 
