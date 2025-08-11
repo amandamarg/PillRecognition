@@ -18,6 +18,62 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import top_k_accuracy_score
 import copy
 
+def embed_all(models_dict, dataloader, embedding_size, n_classes, device, include_logits=True):
+    num_imgs = len(dataloader.dataset)
+    start_idx = 0
+
+    all_labels = torch.zeros(num_imgs).to(device)
+    all_embeddings = torch.zeros(num_imgs, embedding_size).to(device)
+
+    models_dict['embedding'].eval()
+
+    if include_logits:
+        models_dict['classifier'].eval()
+        all_logits = torch.zeros(num_imgs, n_classes).to(device)
+
+    with torch.set_grad_enabled(False):
+        for data in tqdm(dataloader, total=len(dataloader)):
+            imgs = data[0].to(device)
+            labels = data[1].to(device)
+            end_idx = start_idx + len(labels)
+            all_labels[start_idx:end_idx] = labels
+
+
+            embeddings =  models_dict['embedding'](imgs)
+            all_embeddings[start_idx:end_idx, :] = embeddings
+
+            if include_logits:
+                logits = models_dict['classifier'](embeddings)
+                all_logits[start_idx:end_idx, :] = logits
+
+            start_idx = end_idx
+
+    if include_logits:
+        return (all_labels, all_embeddings, all_logits)
+    return (all_labels, all_embeddings)
+
+def MRR(true_labels, logits, per_class=False):
+    assert true_labels.device.type=='cpu' and logits.device.type=='cpu'
+    batch_size, n_classes = logits.shape
+    ranked_predictions = torch.argsort(logits, dim=1, descending=True)
+    ranking_mask = (ranked_predictions == true_labels.reshape(batch_size,1).expand(batch_size, n_classes))
+    rank_of_true_label = torch.argwhere(ranking_mask)
+    rank_of_true_label[:, 1] = rank_of_true_label[:, 1] + 1 # this is so that the first ranked element is 1 and not 0
+    reciprocal_rank = (1/(rank_of_true_label[:,1]))
+    if per_class:
+        unique_labels, inv_unique_labels, counts_labels = torch.unique(true_labels, return_inverse=True, return_counts=True)
+        ordered_reciprocal_rankings = torch.zeros((len(unique_labels), batch_size), dtype=torch.float)
+        ordered_reciprocal_rankings[inv_unique_labels, rank_of_true_label[:,0]] = reciprocal_rank
+        return (unique_labels, ordered_reciprocal_rankings.sum(dim=1)/counts_labels)
+    return reciprocal_rank.sum()/batch_size
+
+def get_classification_accuracy(true_labels, logits):
+    assert true_labels.device.type=='cpu' and logits.device.type=='cpu'
+    all_labels = np.arange(start=0,stop=logits.shape[1])
+    top_1_accuracy = top_k_accuracy_score(true_labels, logits, k=1, labels=all_labels)
+    top_5_accuracy = top_k_accuracy_score(true_labels, logits, k=5, labels=all_labels)
+    return top_1_accuracy, top_5_accuracy
+
 def get_total_loss(losses, weights):
     total_loss = 0.0
     for k,v in losses.items():
@@ -231,6 +287,19 @@ def train(models, dataloaders, num_epochs, device,  miner, loss_funcs, loss_weig
         lr_scheduler["embedding"].step(val_loss_avgs["embedding"][-1])
         lr_scheduler["classifier"].step(val_loss_avgs["classifier"][-1])
 
+def test_model(model_dict, label_encoder, dataloader, embedding_size, n_classes, device):
+    all_labels, all_embeddings, all_logits  = embed_all(model_dict, dataloader, embedding_size, n_classes, device)
+    mrr_overall = MRR(all_labels.cpu(), all_logits.cpu())
+    u_labels, mrr_per_class = MRR(all_labels.cpu(), all_logits.cpu(), True)
+    top_1_acc, top_5_acc = get_classification_accuracy(all_labels.cpu(), all_logits.cpu())
+    print("Top 1 calssification accuracy: ", top_1_acc)
+    print("Top 5 calssification accuracy: ", top_5_acc)
+    print("mrr_overall = {:f}".format(mrr_overall.item()))
+    print("mrr per class: ")
+    u_labels_decoded = label_encoder.inverse_transform(u_labels.type(torch.int64))
+    for i, l in enumerate(u_labels_decoded):
+        print('{} = {:f}'.format(l, mrr_per_class[i].item()))
+
 def save_model(model_name, curr_epoch, save_dir = '/Users/Amanda/Desktop/PillRecognition/model'):
     os.makedirs(os.path.join(save_dir, model_name, 'embedding'), exist_ok=True)
     os.makedirs(os.path.join(save_dir, model_name, 'classifier'), exist_ok=True)
@@ -276,6 +345,7 @@ if __name__ == "__main__":
 
     train(models, dataloaders, num_epochs, device,  miner, loss_funcs, loss_weights, optimizers, lr_schedulers)
 
+    test_dataloader =  DataLoader(dataset_dict['test'], batch_size=32)
 
     save_model('my_model', num_epochs)
     # model_weights = copy.deepcopy(model.state_dict())

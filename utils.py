@@ -299,3 +299,16 @@ def embed_all(models_dict, dataloader, embedding_size, n_classes, device, includ
     if include_logits:
         return (all_labels, all_embeddings, all_logits)
     return (all_labels, all_embeddings)
+
+def test(model_dict, label_encoder, dataloader, embedding_size, n_classes, device):
+    all_labels, all_embeddings, all_logits  = embed_all(model_dict, test_dataloader, embedding_size, n_classes, device)
+    mrr_overall = MRR(all_labels.cpu(), all_logits.cpu())
+    u_labels, mrr_per_class = MRR(all_labels.cpu(), all_logits.cpu(), True)
+    top_1_acc, top_5_acc = get_classification_accuracy(all_labels.cpu(), all_logits.cpu())
+    print("Top 1 calssification accuracy: ", top_1_acc)
+    print("Top 5 calssification accuracy: ", top_5_acc)
+    print("mrr_overall = {:f}".format(mrr_overall.item()))
+    print("mrr per class: ")
+    u_labels_decoded = label_encoder.inverse_transform(u_labels.type(torch.int64))
+    for i, l in enumerate(u_labels_decoded):
+        print('{} = {:f}'.format(l, mrr_per_class[i].item()))
