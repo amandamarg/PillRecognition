@@ -10,6 +10,7 @@ from sklearn.preprocessing import LabelEncoder
 from glob import glob
 import os
 import torch
+import tqdm
 
 def readLabelsObjDetect(path):
     with open(path, 'r') as f:
@@ -265,3 +266,36 @@ def get_classification_accuracy(true_labels, logits):
     top_1_accuracy = top_k_accuracy_score(true_labels, logits, k=1, labels=all_labels)
     top_5_accuracy = top_k_accuracy_score(true_labels, logits, k=5, labels=all_labels)
     return top_1_accuracy, top_5_accuracy
+
+def embed_all(models_dict, dataloader, embedding_size, n_classes, device, include_logits=True):
+    num_imgs = len(dataloader.dataset)
+    start_idx = 0
+
+    all_labels = torch.zeros(num_imgs).to(device)
+    all_embeddings = torch.zeros(num_imgs, embedding_size).to(device)
+
+    models_dict['embedding'].eval()
+
+    if include_logits:
+        models_dict['classifier'].eval()
+        all_logits = torch.zeros(num_imgs, n_classes).to(device)
+
+    with torch.set_grad_enabled(False):
+        for data in tqdm(dataloader, total=len(dataloader)):
+            imgs = data[0].to(device)
+            labels = data[1].to(device)
+            end_idx = start_idx + len(labels)
+
+            all_labels[start_idx:end_idx] = labels
+
+            embeddings =  models_dict['embedding'](imgs)
+            all_embeddings[start_idx:end_idx, :] = embeddings
+
+            if include_logits:
+                logits = models_dict['classifier'](embeddings)
+                all_logits[start_idx:end_idx, :] = logits
+
+            start_idx = end_idx
+    if include_logits:
+        return (all_labels, all_embeddings, all_logits)
+    return (all_labels, all_embeddings)
