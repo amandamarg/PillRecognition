@@ -247,13 +247,15 @@ def MRR(true_labels, logits, per_class=False):
     ranked_predictions = torch.argsort(logits, dim=1, descending=True)
     ranking_mask = (ranked_predictions == true_labels.reshape(batch_size,1).expand(batch_size, n_classes))
     rank_of_true_label = torch.argwhere(ranking_mask)
-    reciprocal_rank = (1/rank_of_true_label[:,1])
+    rank_of_true_label[:, 1] = rank_of_true_label[:, 1] + 1 # this is so that the first ranked element is 1 and not 0
+    reciprocal_rank = (1/(rank_of_true_label[:,1]))
     if per_class:
         unique_labels, inv_unique_labels, counts_labels = torch.unique(true_labels, return_inverse=True, return_counts=True)
         ordered_reciprocal_rankings = torch.zeros((len(unique_labels), batch_size), dtype=torch.float)
         ordered_reciprocal_rankings[inv_unique_labels, rank_of_true_label[:,0]] = reciprocal_rank
         return (unique_labels, ordered_reciprocal_rankings.sum(dim=1)/counts_labels)
     return reciprocal_rank.sum()/batch_size
+
 
 from sklearn.metrics import top_k_accuracy_score
 
