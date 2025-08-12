@@ -267,7 +267,7 @@ def get_classification_accuracy(true_labels, logits):
     top_5_accuracy = top_k_accuracy_score(true_labels, logits, k=5, labels=all_labels)
     return top_1_accuracy, top_5_accuracy
 
-def embed_all(models_dict, dataloader, embedding_size, n_classes, device, include_logits=True):
+def embed_all(models_dict, dataloader, embedding_size, n_classes, device, include_logits=True, sort=False):
     num_imgs = len(dataloader.dataset)
     start_idx = 0
 
@@ -285,8 +285,8 @@ def embed_all(models_dict, dataloader, embedding_size, n_classes, device, includ
             imgs = data[0].to(device)
             labels = data[1].to(device)
             end_idx = start_idx + len(labels)
-
             all_labels[start_idx:end_idx] = labels
+
 
             embeddings =  models_dict['embedding'](imgs)
             all_embeddings[start_idx:end_idx, :] = embeddings
@@ -296,9 +296,15 @@ def embed_all(models_dict, dataloader, embedding_size, n_classes, device, includ
                 all_logits[start_idx:end_idx, :] = logits
 
             start_idx = end_idx
+    if sort:
+        all_labels, sorted_ind = all_labels.sort()
+        all_embeddings = all_embeddings[sorted_ind]
+        if include_logits:
+            all_logits = all_logits[sorted_ind]
+
     if include_logits:
-        return (all_labels, all_embeddings, all_logits)
-    return (all_labels, all_embeddings)
+        return (all_labels.type(torch.int32), all_embeddings, all_logits)
+    return (all_labels.type(torch.int32), all_embeddings)
 
 def test(model_dict, label_encoder, dataloader, embedding_size, n_classes, device):
     all_labels, all_embeddings, all_logits  = embed_all(model_dict, test_dataloader, embedding_size, n_classes, device)
@@ -312,3 +318,7 @@ def test(model_dict, label_encoder, dataloader, embedding_size, n_classes, devic
     u_labels_decoded = label_encoder.inverse_transform(u_labels.type(torch.int64))
     for i, l in enumerate(u_labels_decoded):
         print('{} = {:f}'.format(l, mrr_per_class[i].item()))
+
+def compare_labels(labels1, labels2):
+    assert labels1.device.type=='cpu' and labels2.device.type=='cpu'
+    return np.equal.outer(labels1.numpy(), labels2.numpy())
