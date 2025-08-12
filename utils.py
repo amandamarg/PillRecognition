@@ -307,7 +307,7 @@ def embed_all(models_dict, dataloader, embedding_size, n_classes, device, includ
     return (all_labels.type(torch.int32), all_embeddings)
 
 def test(model_dict, label_encoder, dataloader, embedding_size, n_classes, device):
-    all_labels, all_embeddings, all_logits  = embed_all(model_dict, test_dataloader, embedding_size, n_classes, device)
+    all_labels, all_embeddings, all_logits  = embed_all(model_dict, dataloader, embedding_size, n_classes, device)
     mrr_overall = MRR(all_labels.cpu(), all_logits.cpu())
     u_labels, mrr_per_class = MRR(all_labels.cpu(), all_logits.cpu(), True)
     top_1_acc, top_5_acc = get_classification_accuracy(all_labels.cpu(), all_logits.cpu())
@@ -322,3 +322,19 @@ def test(model_dict, label_encoder, dataloader, embedding_size, n_classes, devic
 def compare_labels(labels1, labels2):
     assert labels1.device.type=='cpu' and labels2.device.type=='cpu'
     return np.equal.outer(labels1.numpy(), labels2.numpy())
+
+from sklearn.metrics.pairwise import  euclidean_distances 
+
+
+def same_batch_distances(all_labels, all_embeddings):
+    assert all_labels.device.type=='cpu' and all_embeddings.device.type=='cpu'
+    dist_matrix = euclidean_distances(all_embeddings, all_embeddings)
+    dist_matrix = dist_matrix - np.identity(len(dist_matrix)) #this is done to make sure that distances between same images are pushed to front when sorting, making them easy to exlude
+    sorted_rankings = dist_matrix.argsort(axis=1)
+    sorted_rankings = sorted_rankings[:,1:] #exclude same images
+
+    same_labels = compare_labels(all_labels, all_labels)
+    same_pairs = np.argwhere(same_labels)
+    same_pairs = same_pairs[same_pairs[:,0] != same_pairs[:,1]] #exclude same images
+    true_ranks = np.stack([same_pairs[:,0], np.argwhere(sorted_rankings[same_pairs[:,0]] == same_pairs[:,1].reshape(-1,1))[:,1]], axis=1)
+    return dist_matrix, sorted_rankings, true_ranks
