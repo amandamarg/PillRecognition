@@ -338,3 +338,12 @@ def same_batch_distances(all_labels, all_embeddings):
     same_pairs = same_pairs[same_pairs[:,0] != same_pairs[:,1]] #exclude same images
     true_ranks = np.stack([same_pairs[:,0], np.argwhere(sorted_rankings[same_pairs[:,0]] == same_pairs[:,1].reshape(-1,1))[:,1]], axis=1)
     return dist_matrix, sorted_rankings, true_ranks
+
+def cons_ref_distances(cons_embeddings, cons_labels, ref_embeddings, ref_labels):
+    assert cons_embeddings.device.type=='cpu' and cons_labels.device.type=='cpu' and ref_embeddings.device.type=='cpu' and ref_labels.device.type=='cpu'
+    dist_matrix = euclidean_distances(cons_embeddings, ref_embeddings)
+    sorted_rankings = dist_matrix.argsort(axis=1)
+    same_labels = compare_labels(cons_labels, ref_labels)
+    same_pairs = np.argwhere(same_labels)
+    true_ranks = np.stack([same_pairs[:,0], np.argwhere(sorted_rankings[same_pairs[:,0]] == same_pairs[:,1].reshape(-1,1))[:,1]], axis=1)
+    return dist_matrix, sorted_rankings, true_ranks
