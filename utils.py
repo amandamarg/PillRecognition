@@ -329,6 +329,8 @@ def get_hits(labels, embeddings, ref_labels=None, ref_embeddings=None, return_di
     ''' 
     If either ref_labels or ref_embeddings is missing, then will compute hits between sambles in same batch, otherwise will compute hits between the first set of embeddings and the second set
     If computing between two different sets of embeddings, it is assumed that there is no overlap between the samples
+    A 'hit' occurs when the corresponding labels between two embedded images match
+    Each row of hits corresponds to 1 sample in the input and each 1 in the column of that row corresponds to a 'hit' at that rank, anything that is not a 'hit' will be 0
     '''
     
     assert labels.device.type=='cpu' and embeddings.device.type=='cpu'
@@ -363,3 +365,28 @@ def get_hits(labels, embeddings, ref_labels=None, ref_embeddings=None, return_di
     if return_same_pairs:
         outputs.append(same_pairs)
     return tuple(outputs)
+
+def ap_k(hits, k):
+    ''' 
+    Calculates the average precision at k
+    '''
+    n,m = hits.shape
+    assert m >= k
+
+    sum_prec_k = np.zeros(n)
+    for i in range(1,k+1):
+        sum_prec_k += ((hits[:,:i].sum(axis=1)/i)*hits[:,i-1])
+    
+    N = hits.sum(axis=1)
+
+    return sum_prec_k/np.where(N > 0, N, np.nan)
+
+def map_k(hits, k, replace_nan=None):
+    ''' 
+    Calculates the mean average precision at k
+    if replace_nan is None, then will default to dropping nan values before calculating mean, otherwise will replace nans with whatever is input into replace_nan
+    '''
+    ap = ap_k(hits, k)
+    if replace_nan is None:
+        return np.mean(ap[~np.isnan(ap)])
+    return np.mean(np.nan_to_num(ap, nan=replace_nan))
