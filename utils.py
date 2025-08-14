@@ -381,12 +381,46 @@ def ap_k(hits, k):
 
     return sum_prec_k/np.where(N > 0, N, np.nan)
 
-def map_k(hits, k, replace_nan=None):
+def map_k(hits, k, replace_nan=None, per_class=False, labels=None):
     ''' 
     Calculates the mean average precision at k
     if replace_nan is None, then will default to dropping nan values before calculating mean, otherwise will replace nans with whatever is input into replace_nan
+    if per_class is true, labels is a required argument
     '''
     ap = ap_k(hits, k)
+    if not per_class:
+        ap = ap[~np.isnan(ap)] if (replace_nan is None) else np.nan_to_num(ap, nan=replace_nan)
+        return np.mean(ap)
+
+    assert labels.device.type == 'cpu'
+    group_labels = np.triu(compare_labels(labels, labels))
+    if replace_nan is not None:
+        ap = np.nan_to_num(ap, nan=replace_nan)
+        return (group_labels @ ap)/group_labels.sum(axis=1)
+    else:
+        map_per_class = (group_labels @ np.nan_to_num(ap, 0.0))/group_labels.sum(axis=1)
+        return np.where(np.isnan(ap), np.nan, map_per_class)
+
+
+
+def get_top_rank(hits, shift_ranks_1=False):
+    top_ranks = np.argmax(hits, axis=1)
+    top_ranks = np.where(np.sum(hits, axis=1) == 0, np.nan, top_ranks)
+    if shift_ranks_1:
+        return top_ranks + 1
+    return top_ranks
+
+def MRR(hits, replace_nan=None, per_class=False, labels=None):
+    '''default behavior is to propogate nans when calculating per_class or exclude nans from calculations otherwise'''
+    top_ranks = get_top_rank(hits, True)
+    if per_class:
+        assert labels.device.type == 'cpu'
+        group_labels = np.triu(compare_labels(labels, labels))
+        reciprocal_ranks = group_labels @ np.where(np.isnan(top_ranks), 0.0, 1/top_ranks)
+        if replace_nan is None:
+            return np.where(np.isnan(top_ranks), np.nan, np.sum(reciprocal_ranks, axis=1)/np.sum(group_labels, axis=1))
+        else:
+            return np.where(np.isnan(top_ranks), replace_nan, np.sum(reciprocal_ranks, axis=1)/np.sum(group_labels, axis=1))
     if replace_nan is None:
-        return np.mean(ap[~np.isnan(ap)])
-    return np.mean(np.nan_to_num(ap, nan=replace_nan))
+        return np.mean((1/top_ranks[~np.isnan(top_ranks)]))
+    return np.mean(np.where(np.isnan(top_ranks), replace_nan, 1/top_ranks))
