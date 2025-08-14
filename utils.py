@@ -325,25 +325,41 @@ def compare_labels(labels1, labels2):
 
 from sklearn.metrics.pairwise import  euclidean_distances 
 
+def get_hits(labels, embeddings, ref_labels=None, ref_embeddings=None, return_distances=False, return_sorted_rankings=False, return_same_pairs=False):
+    ''' 
+    If either ref_labels or ref_embeddings is missing, then will compute hits between sambles in same batch, otherwise will compute hits between the first set of embeddings and the second set
+    If computing between two different sets of embeddings, it is assumed that there is no overlap between the samples
+    '''
+    
+    assert labels.device.type=='cpu' and embeddings.device.type=='cpu'
+    outputs = []
+    if ref_labels is not None and ref_embeddings is not None:
+        assert ref_labels.device.type=='cpu' and ref_embeddings.device.type=='cpu'
+        distances = euclidean_distances(embeddings, ref_embeddings)
+        sorted_rankings = distances.argsort(axis=1)
+        same_labels = compare_labels(labels, ref_labels)
+        same_pairs = np.argwhere(same_labels)
 
-def same_batch_distances(all_labels, all_embeddings):
-    assert all_labels.device.type=='cpu' and all_embeddings.device.type=='cpu'
-    dist_matrix = euclidean_distances(all_embeddings, all_embeddings)
-    dist_matrix = dist_matrix - np.identity(len(dist_matrix)) #this is done to make sure that distances between same images are pushed to front when sorting, making them easy to exlude
-    sorted_rankings = dist_matrix.argsort(axis=1)
-    sorted_rankings = sorted_rankings[:,1:] #exclude same images
+    else:
+        distances = euclidean_distances(embeddings, embeddings)
+        distances = distances - np.identity(len(distances)) #this is done to make sure that distances between same images are pushed to front when sorting, making them easy to exlude
+        sorted_rankings = distances.argsort(axis=1)
+        sorted_rankings = sorted_rankings[:,1:] #exclude same images
 
-    same_labels = compare_labels(all_labels, all_labels)
-    same_pairs = np.argwhere(same_labels)
-    same_pairs = same_pairs[same_pairs[:,0] != same_pairs[:,1]] #exclude same images
+        same_labels = compare_labels(labels, labels)
+        same_pairs = np.argwhere(same_labels)
+        same_pairs = same_pairs[same_pairs[:,0] != same_pairs[:,1]] #exclude same images
+
+
     true_ranks = np.stack([same_pairs[:,0], np.argwhere(sorted_rankings[same_pairs[:,0]] == same_pairs[:,1].reshape(-1,1))[:,1]], axis=1)
-    return dist_matrix, sorted_rankings, true_ranks
-
-def cons_ref_distances(cons_embeddings, cons_labels, ref_embeddings, ref_labels):
-    assert cons_embeddings.device.type=='cpu' and cons_labels.device.type=='cpu' and ref_embeddings.device.type=='cpu' and ref_labels.device.type=='cpu'
-    dist_matrix = euclidean_distances(cons_embeddings, ref_embeddings)
-    sorted_rankings = dist_matrix.argsort(axis=1)
-    same_labels = compare_labels(cons_labels, ref_labels)
-    same_pairs = np.argwhere(same_labels)
-    true_ranks = np.stack([same_pairs[:,0], np.argwhere(sorted_rankings[same_pairs[:,0]] == same_pairs[:,1].reshape(-1,1))[:,1]], axis=1)
-    return dist_matrix, sorted_rankings, true_ranks
+    n,m = sorted_rankings.shape
+    hits = np.zeros((n, m))
+    hits[true_ranks[:,0], true_ranks[:,1]] = 1
+    outputs.append(hits)
+    if return_distances:
+        outputs.append(distances)
+    if return_sorted_rankings:
+        outputs.append(sorted_rankings)
+    if return_same_pairs:
+        outputs.append(same_pairs)
+    return tuple(outputs)
