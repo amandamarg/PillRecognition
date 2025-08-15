@@ -25,7 +25,6 @@ def train_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, opt
     classifier.train()
 
     running_loss = {'embedding': [], 'classifier': [], 'total': []}
-    curr_loss = {'embedding': 0.0, 'classifier': 0.0}
     embedding_metrics = {'ap_1': [], 'ap_5': [], 'map_1': [], 'map_5': [], 'MRR': []}
     logit_metrics = {'top_1_accuracy': [], 'top_5_accuracy': [], 'MRR': []}
 
@@ -76,14 +75,13 @@ def train_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, opt
     for k, v in logit_metrics.items():
         epoch_logit_metrics[k].append(v/len(v))
 
-    return
+    return running_loss, embedding_metrics, logit_metrics
 
 def val_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, epoch_embedding_metrics, epoch_logits_metrics, loss_dict):
     embedding_model.eval()
     classifier.eval()
 
     running_loss = {'embedding': [], 'classifier': [], 'total': []}
-    curr_loss = {'embedding': 0.0, 'classifier': 0.0}
     embedding_metrics = {'ap_1': [], 'ap_5': [], 'map_1': [], 'map_5': [], 'MRR': []}
     logit_metrics = {'top_1_accuracy': [], 'top_5_accuracy': [], 'MRR': []}
 
@@ -121,7 +119,7 @@ def val_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, epoch
     for k, v in logit_metrics.items():
         epoch_logit_metrics[k].append(v/len(v))
 
-    return
+    return running_loss, embedding_metrics, logit_metrics
 
 def train(model_name, models, dataloaders, num_epochs, device,  miner, loss_funcs, loss_weights, optimizers, lr_scheduler):
     models["embedding"].to(device)
@@ -130,7 +128,7 @@ def train(model_name, models, dataloaders, num_epochs, device,  miner, loss_func
     train_loss_avgs = {"embedding": [], "classifier": [], "total": []}
     val_loss_avgs = {"embedding": [], "classifier": [], "total": []}
     train_epoch_embedding_metrics = {'ap_1': [], 'ap_5': [], 'map_1': [], 'map_5': [], 'MRR': []}
-    train_epoch_logits_metrics = {}
+    train_epoch_logits_metrics = {'top_1_accuracy': [], 'top_5_accuracy': [], 'MRR': []}
     val_epoch_embedding_metrics = {'ap_1': [], 'ap_5': [], 'map_1': [], 'map_5': [], 'MRR': []}
     val_epoch_logits_metrics = {'top_1_accuracy': [], 'top_5_accuracy': [], 'MRR': []}
 

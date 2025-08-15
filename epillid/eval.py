@@ -114,15 +114,8 @@ def MRR(true_labels, logits, per_class=False):
         ordered_reciprocal_rankings = torch.zeros((len(unique_labels), batch_size), dtype=torch.float)
         ordered_reciprocal_rankings[inv_unique_labels, rank_of_true_label[:,0]] = reciprocal_rank
         return (unique_labels, ordered_reciprocal_rankings.sum(dim=1)/counts_labels)
-    return reciprocal_rank.sum()
+    return reciprocal_rank.sum()/batch_size
 
-'''
-To evaluate embeddings:
-ap@k, mp@k
-
-To evaluate logits:
-MRR, classification_accuracy (?)
-'''
 
 def eval_embeddings(labels, embeddings, ref_labels=None, ref_embeddings=None):
     assert labels.device.type=='cpu' and embeddings.device.type=='cpu'
