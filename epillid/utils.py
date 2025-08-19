@@ -3,29 +3,25 @@ from glob import glob
 import torch
 import pandas as pd
 import tqdm
+import numpy as np
+from dataset import PillImages
 
-def get_csv(data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata', val_fold=3, test_fold=4):
-    csv_files =  glob(data_root_dir + '/folds/**/*.csv', recursive=True)
+def load_data(data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata', img_dir='classification_data'):
+    csv_files = glob(data_root_dir + '/folds/**/*.csv', recursive=True)
     all_imgs_csv = [x for x in csv_files if x.endswith("all.csv")][0]
     folds = sorted([x for x in csv_files if not x.endswith("all.csv")])
-    return all_imgs_csv, folds
+    all_imgs_df = pd.read_csv(all_imgs_csv)
+    fold_indicies = [np.where(all_imgs_df.image_path.isin(pd.read_csv(fold).image_path))[0] for fold in folds]
+    return all_imgs_df, fold_indicies
 
-# def load_data(all_imgs_csv, folds, folds_sorted=True)
-#     if not folds_sortedÑ
-#         folds=sorted(folds)
-#     all_imgs_df = pd.read_csv(all_imgs_csv)
-#     test_df = pd.read_csv(folds[test_fold])
-#     val_df = pd.read_csv(folds[val_fold])
+def split_data(all_imgs_df, fold_indicies, val_fold=3, test_fold=4):
+    val_df = all_imgs_df.iloc[fold_indicies[val_fold]].reset_index(drop=True)
+    test_df = all_imgs_df.iloc[fold_indicies[test_fold]].reset_index(drop=True)
+    train_df = all_imgs_df.iloc[np.concatenate([f for i,f in enumerate(fold_indicies) if i != 3 and i != 4])].reset_index(drop=True)
+    return {'train': train_df,'vale': val_df, 'test': test_df}
 
-#     img_dir = 'classification_data'
-#     for df in [all_images_df, val_df, test_df]:
-#         df['image_path'] = df['image_path'].apply(lambda x: os.path.join(data_root_dir, img_dir, x))
-
-#     val_test_image_paths = list(val_df['image_path'].values) + list(test_df['image_path'].values)
-#     train_df = all_imgs_df[~all_imgs_df.isin(val_test_image_paths)].reset_index()
-    
-#     return {'train': train_df, 'val': val_df, 'test': test_df, 'all': all_imgs_df}
-
+def get_dataset(cons_df, ref_df, phase, labelcol):
+    return PillImages(pd.concat([cons_df, ref_df]), phase, labelcol=labelcol)
 
 def save_model(models, model_name, curr_epoch, save_dir = '/Users/Amanda/Desktop/PillRecognition/model'):
     os.makedirs(os.path.join(save_dir, model_name, 'embedding'), exist_ok=True)
@@ -73,4 +69,3 @@ def embed_all(models_dict, dataloader, embedding_size, n_classes, device, includ
         return (all_labels.type(torch.int32), all_embeddings, all_logits)
     return (all_labels.type(torch.int32), all_embeddings)
 
-def save_best_epoch()

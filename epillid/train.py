@@ -154,6 +154,4 @@ def train(model_name, models, dataloaders, num_epochs, device,  miner, loss_func
         lr_scheduler["embedding"].step(val_loss_avgs["embedding"][-1])
         lr_scheduler["classifier"].step(val_loss_avgs["classifier"][-1])
         utils.save_model(models, model_name, i)
-
-    return train_loss_avgs, val_loss_avgs, train_epoch_embedding_metrics, train_epoch_logits_metrics, val_epoch_embedding_metrics, val_epoch_logits_metrics
-
+    return {"loss": train_loss_avgs, "embedding_metrics": val_epoch_embedding_metrics, "logits_metrics": train_epoch_logits_metrics}, {"loss": val_loss_avgs, "embedding_metrics": train_epoch_embedding_metrics, "logits_metrics": val_epoch_logits_metrics}

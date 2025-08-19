@@ -2,6 +2,7 @@ from sklearn.metrics.pairwise import  euclidean_distances
 from sklearn.metrics import top_k_accuracy_score
 import numpy as np 
 import torch
+from utils import embed_all
 
 def compare_labels(labels1, labels2):
     assert labels1.device.type=='cpu' and labels2.device.type=='cpu'
@@ -131,8 +132,12 @@ def eval_embeddings(labels, embeddings, ref_labels=None, ref_embeddings=None):
 
     return {'ap_1': ap_k(hits, 1), 'ap_5': ap_k(hits, 5), 'map_1': map_k(hits, 1), 'map_5': map_k(hits, 5), 'MRR': MRR_embed(hits)}
 
-
 def eval_logits(labels, logits):
     assert labels.device.type=='cpu' and logits.device.type=='cpu'
     all_labels = np.arange(start=0,stop=logits.shape[1])
     return {'top_1_accuracy': top_k_accuracy_score(labels, logits, k=1, labels=all_labels), 'top_5_accuracy':top_k_accuracy_score(labels, logits, k=5, labels=all_labels), 'MRR': MRR(labels, logits)}
+
+
+def test(models, test_dataloader, embedding_size, n_classes, device):
+    labels, embeddings, logits = embed_all(models, test_dataloader, embedding_size, n_classes, device, include_logits=True)
+    

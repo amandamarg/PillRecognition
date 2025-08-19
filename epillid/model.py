@@ -18,10 +18,10 @@ class MyModel(nn.Module):
         self.embedding_size = embedding_model.fc.in_features
         embedding_model.fc = torch.nn.Identity()
         self.embedding_model = embedding_model
-        self.classifier = Classifier(embedding_size, n_classes)
+        self.classifier = Classifier(self.embedding_size, n_classes)
     
     def forward(self, input):
         embeddings = self.embedding_model(input)
         logits = self.classifier(input)
-        return embedding, logits
+        return embeddings, logits
 
