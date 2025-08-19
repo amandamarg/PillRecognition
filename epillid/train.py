@@ -132,15 +132,28 @@ def train(model_name, models, dataloaders, num_epochs, device,  miner, loss_func
     val_epoch_embedding_metrics = {'ap_1': [], 'ap_5': [], 'map_1': [], 'map_5': [], 'MRR': []}
     val_epoch_logits_metrics = {'top_1_accuracy': [], 'top_5_accuracy': [], 'MRR': []}
 
+
     for i in range(num_epochs):
         print("Training Epoch {:d}...".format(i))
         train_epoch(dataloaders["train"], device, models, miner, loss_funcs, loss_weights, optimizers, train_loss_avgs, train_epoch_embedding_metrics, train_epoch_logits_metrics, True)
         print("Training loss: embedding_model_loss={:f}, classifier_loss={:f}, total={:f}".format(train_loss_avgs["embedding"][-1], train_loss_avgs["classifier"][-1], train_loss_avgs["total"][-1]))
+        print("Training Embedding Metrics:")
+        for metric, metric_val in train_epoch_embedding_metrics.items():
+            print(metric + '={:d}'.format(metric_val[-1]))
+        print("Training Logis Metrics:")
+        for metric, metric_val in train_epoch_logits_metrics.items():
+            print(metric + '={:d}'.format(metric_val[-1]))
         val_epoch(dataloaders["val"], device, models, miner, loss_funcs, loss_weights, val_loss_avgs, val_epoch_embedding_metrics, val_epoch_logits_metrics)
         print("Validation loss: embedding_model_loss={:f}, classifier_loss={:f}, total={:f}".format(val_loss_avgs["embedding"][-1], val_loss_avgs["classifier"][-1], val_loss_avgs["total"][-1]))
+        print("Validation Embedding Metrics:")
+        for metric, metric_val in val_epoch_embedding_metrics.items():
+            print(metric + '={:d}'.format(metric_val[-1]))
+        print("Validation Logis Metrics:")
+        for metric, metric_val in val_epoch_logits_metrics.items():
+            print(metric + '={:d}'.format(metric_val[-1]))
         lr_scheduler["embedding"].step(val_loss_avgs["embedding"][-1])
         lr_scheduler["classifier"].step(val_loss_avgs["classifier"][-1])
-    
-    utils.save_model(model_name, num_epochs)
+        utils.save_model(models, model_name, i)
 
+    return train_loss_avgs, val_loss_avgs, train_epoch_embedding_metrics, train_epoch_logits_metrics, val_epoch_embedding_metrics, val_epoch_logits_metrics
 
