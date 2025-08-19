@@ -19,10 +19,10 @@ from PIL import Image
 import eval
 import utils
 
-def train_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, optimizers, loss_dict, epoch_embedding_metrics, epoch_logits_metrics, clip_gradients=True):
+def train_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, optimizers, loss_dict, epoch_embedding_metrics, epoch_logit_metrics, clip_gradients=True):
     
-    embedding_model.train()
-    classifier.train()
+    models["embedding"].train()
+    models["classifier"].train()
 
     running_loss = {'embedding': [], 'classifier': [], 'total': []}
     embedding_metrics = {'ap_1': [], 'ap_5': [], 'map_1': [], 'map_5': [], 'MRR': []}
@@ -77,9 +77,9 @@ def train_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, opt
 
     return running_loss, embedding_metrics, logit_metrics
 
-def val_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, epoch_embedding_metrics, epoch_logits_metrics, loss_dict):
-    embedding_model.eval()
-    classifier.eval()
+def val_epoch(dataloader, device, models, miner, loss_funcs, loss_weights, epoch_embedding_metrics, epoch_logit_metrics, loss_dict):
+    models["embedding"].eval()
+    models["classifier"].eval()
 
     running_loss = {'embedding': [], 'classifier': [], 'total': []}
     embedding_metrics = {'ap_1': [], 'ap_5': [], 'map_1': [], 'map_5': [], 'MRR': []}
