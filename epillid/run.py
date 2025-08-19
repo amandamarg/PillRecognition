@@ -37,14 +37,14 @@ if __name__ == "__main__":
     all_imgs_df[encoded_label_name] = label_encoder.fit_transform(all_imgs_df[LABELCOL])
     ref_df = all_imgs_df[all_imgs_df.is_ref].reset_index(drop=True)
     cons_splits = utils.split_data(all_imgs_df, fold_indicies, val_fold=3, test_fold=4)
-    
 
-    datasets = {k: PillImages(pd.concat([v , ref_df]).reset_index(drop=True), k, labelcol=encoded_label_name) for k,v in cons_splits}
+
+    datasets = {k: PillImages(pd.concat([v , ref_df]).reset_index(drop=True), k, labelcol=encoded_label_name) for k,v in cons_splits.items()}
     train_batch_sampler = CustomBatchSamplerPillID(datasets['train'].df, batch_size=BATCH_SIZE, labelcol='encoded_label')
     val_batch_sampler = CustomBatchSamplerPillID(datasets['val'].df, batch_size=BATCH_SIZE, labelcol='encoded_label')
     train_dataloader = DataLoader(datasets['train'], batch_sampler=train_batch_sampler)
     val_dataloader = DataLoader(datasets['val'], batch_sampler=val_batch_sampler)
-    dataloaders = {"train": train_dataloader, "val": val_dataloader}
+    dataloaders = {"train": DataLoader(datasets['train'], batch_sampler=train_batch_sampler), "val": DataLoader(datasets['val'], batch_sampler=val_batch_sampler)}
 
     #initalize embedding model
     embedding_model = resnet50(weights=ResNet50_Weights.DEFAULT)
@@ -72,5 +72,4 @@ if __name__ == "__main__":
     train_metrics, val_metrics = train(MODEL_NAME, models, dataloaders, NUM_EPOCHS, device,  miner, loss_funcs, loss_weights, optimizers, lr_schedulers)
     print(train_metrics)
     print(val_metrics)
-
 

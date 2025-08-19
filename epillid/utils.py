@@ -18,7 +18,7 @@ def split_data(all_imgs_df, fold_indicies, val_fold=3, test_fold=4):
     val_df = all_imgs_df.iloc[fold_indicies[val_fold]].reset_index(drop=True)
     test_df = all_imgs_df.iloc[fold_indicies[test_fold]].reset_index(drop=True)
     train_df = all_imgs_df.iloc[np.concatenate([f for i,f in enumerate(fold_indicies) if i != 3 and i != 4])].reset_index(drop=True)
-    return {'train': train_df,'vale': val_df, 'test': test_df}
+    return {'train': train_df,'val': val_df, 'test': test_df}
 
 def get_dataset(cons_df, ref_df, phase, labelcol):
     return PillImages(pd.concat([cons_df, ref_df]), phase, labelcol=labelcol)
