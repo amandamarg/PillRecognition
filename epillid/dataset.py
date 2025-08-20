@@ -51,27 +51,23 @@ class CustomBatchSamplerPillID(BatchSampler):
             self.rng = np.random.default_rng()
 
     def __iter__(self):
-        labels = list(self.df[self.labelcol].unique())
-        label_map= {k: self.df[self.df[self.labelcol] == k].index.tolist() for k in labels}
-        while len(labels) > 0:
+        label_map = {k: v.values for k,v in self.df.groupby(self.labelcol).groups.items() if len(v) > 1} # dropping any labels with only 1 index per label
+        while len(label_map) > 0:
             curr_batch = []
             while self.batch_size > len(curr_batch):
-                self.rng.shuffle(labels)
-                curr_label = labels[0]
+                curr_label = self.rng.choice(list(label_map.keys()))
                 indicies = label_map[curr_label]
-                self.rng.shuffle(indicies)                    
-                if len(indicies) < 4:
-                    if len(indicies) > 1: # TODO: find a better way to deal with classses with only 1 image per label, but for now, we'll just ignore those classes
-                        curr_batch.extend(indicies)
-                        label_map[curr_label] = []
-                    labels.remove(curr_label)
-                    if len(labels) == 0:
+                if len(indicies) < 4: # if 3 or less labels, just add all of them and then remove from label map
+                    curr_batch.extend(indicies)
+                    label_map.pop(curr_label)
+                    if len(label_map) == 0:
                         break
                 else:
-                    curr_batch.extend(indicies[:2])
-                    label_map[curr_label] = indicies[2:]
+                    selected_indicies = self.rng.choice(indicies, 2, replace=False)
+                    curr_batch.extend(selected_indicies)
+                    label_map[curr_label] = indicies[~np.isin(indicies, selected_indicies)]
+            assert (len(curr_batch) > 0)
             yield curr_batch
-
+            
     def __len__(self):
-        return len(self.df)//self.batch_size
-    
+        return int(self.df[self.labelcol].value_counts().where(lambda x: x > 1).sum())//self.batch_size
