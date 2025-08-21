@@ -5,17 +5,16 @@ import torch
 import warnings
 
 class Metrics:
-    def __init__(self, best_is, replace_nan=None):
+    def __init__(self, best_is):
         assert best_is in ["max", "min", 0]
         self.best_is = best_is
-        self.replace_nan = replace_nan
 
     def calculate(self, inputs):
         pass
     
 class AP_K(Metrics):
     def __init__(self, k, replace_nan=None, use_min=False):
-        super().__init__(best_is="max", replace_nan=replace_nan)
+        super().__init__(best_is="max")
         self.k = k
         self.use_min = use_min #if True, then for an input where cols = # columns, will use the min(cols,k) for k, otherwise if cols < k, will return None
 
@@ -35,17 +34,30 @@ class AP_K(Metrics):
 
         replace_val = self.replace_nan if self.replace_nan is not None else np.nan
 
-        return sum_prec_k/np.where(N > 0, N, replace_val)
+        return np.where(N > 0, sum_prec_k/N, replace_val)
 
 
 class MAP_K(AP_K):
-    def __init__(self, k, replace_nan=None, use_min=False, per_class=False):
+    def __init__(self, k, drop_nan=True, use_min=False, per_class=False):
+        replace_nan = None if drop_nan else 0
         super().__init__(k=k,replace_nan=replace_nan,use_min=use_min)
         self.per_class = per_class
+        self.drop_nan = drop_nan
 
     def calculate(self, inputs, labels=None):
         apk = super().calculate(inputs=inputs)
-        if self.per_class:
-            assert labels is not None
-            
-        return
+        if apk is None:
+            return None
+        if self.drop_nan:
+            if labels is not None:
+                labels = labels[np.isnan(apk)]
+            apk = apk[np.isnan(apk)]
+        if not self.per_class:
+            return apk.sum()/len(apk)
+        unique_labels = labels.unique()
+        grouped_labels = np.equal.outer(unique_labels, labels)
+        counts = grouped_labels.sum(axis=1)
+        assert (counts > 0).all()
+        mapk = (grouped_labels @ apk)/counts
+        return (unique_labels, mapk)
+

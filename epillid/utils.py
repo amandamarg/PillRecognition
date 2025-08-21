@@ -69,9 +69,9 @@ def embed_all(models_dict, dataloader, embedding_size, n_classes, device, includ
         return (all_labels.type(torch.int32), all_embeddings, all_logits)
     return (all_labels.type(torch.int32), all_embeddings)
 
-def front_back_pairs(df):
+def front_back_pairs(df, labelcol):
     pairs = []
-    for group_label,group in df.groupby('label'):
+    for group_label,group in df.groupby(labelcol):
         front = group[group.is_front]
         back = group[~group.is_front]
         k = min(len(front), len(back))
