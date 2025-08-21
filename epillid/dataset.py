@@ -29,8 +29,9 @@ class PillImages(Dataset):
             img = self.transform(img)
 
         label = row[self.labelcol]
-
-        return img, label
+        if self.label_encoder is not None:
+            label = self.label_encoder.transform([label])[0]
+        return label, img, row.is_front, row.is_ref
     
     def load_img(self, img_path):
         if not os.path.exists(img_path):
@@ -40,6 +41,42 @@ class PillImages(Dataset):
         return to_tensor(Image.open(img_path))
 
 
+class TwoSidedPillImages(Dataset):
+    def __init__(self, front_df, back_df, transform=None, augment=None, labelcol="pilltype_id", label_encoder=None):
+        assert len(front_df) == len(back_df)
+        self.front_df = front_df
+        self.back_df = back_df
+        self.transform = transform
+        self.augment = augment
+        assert (self.front_df[labelcol].values == self.back_df[labelcol].values).all()
+        self.labelcol = labelcol
+        self.label_encoder = label_encoder
+
+    def __len__(self):
+        return len(self.front_df)
+    
+    def __getitem__(self, index):
+        front_row = self.front_df.iloc[index]
+        back_row = self.back_df.iloc[index]
+
+        front_img = self.load_img(front_row['image_path'])
+        back_img = self.load_img(back_row['image_path'])
+
+        if self.transform is not None:
+            front_img = self.transform(front_img)
+            back_img = self.transform(back_img)
+
+        label = front_row[self.labelcol]
+        if self.label_encoder is not None:
+            label = self.label_encoder.transform([label])[0]
+        return label, (front_img, back_img), (front_row.is_ref, back_row.is_ref)
+    
+    def load_img(self, img_path):
+        if not os.path.exists(img_path):
+            print("img not found", img_path)
+            return
+        to_tensor = transforms.Compose([transforms.PILToTensor(), transforms.ToDtype(torch.float32, scale=True)])
+        return to_tensor(Image.open(img_path))
 class CustomBatchSamplerPillID(BatchSampler):
     def __init__(self, df, batch_size, labelcol="pilltype_id", generator=None):
         self.df = df.copy().reset_index() # the dataset uses .iloc
@@ -71,3 +108,4 @@ class CustomBatchSamplerPillID(BatchSampler):
             
     def __len__(self):
         return int(self.df[self.labelcol].value_counts().where(lambda x: x > 1).sum())//self.batch_size
+
