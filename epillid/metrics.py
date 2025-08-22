@@ -9,7 +9,7 @@ class Metrics:
         assert best_is in ["max", "min", 0]
         self.best_is = best_is
 
-    def calculate(self, inputs):
+    def calculate(self, hits):
         pass
     
 class AP_K(Metrics):
@@ -18,8 +18,8 @@ class AP_K(Metrics):
         self.k = k
         self.use_min = use_min #if True, then for an input where cols = # columns, will use the min(cols,k) for k, otherwise if cols < k, will return None
 
-    def calculate(self, inputs):
-        _,cols = inputs.shape
+    def calculate(self, hits):
+        _,cols = hits.shape
         k = min(cols, self.k)
         if cols < self.k:
             warnings.warn("{:d} cols is less than k={:d}".format(cols,self.k))
@@ -28,9 +28,9 @@ class AP_K(Metrics):
         
         sum_prec_k = np.zeros(cols)
         for i in range(1,k+1):
-            sum_prec_k += ((inputs[:,:i].sum(axis=1)/i)*inputs[:,i-1])
+            sum_prec_k += ((hits[:,:i].sum(axis=1)/i)*hits[:,i-1])
     
-        N = inputs.sum(axis=1)
+        N = hits.sum(axis=1)
 
         replace_val = self.replace_nan if self.replace_nan is not None else np.nan
 
@@ -44,8 +44,8 @@ class MAP_K(AP_K):
         self.per_class = per_class
         self.drop_nan = drop_nan
 
-    def calculate(self, inputs, labels=None):
-        apk = super().calculate(inputs=inputs)
+    def calculate(self, hits, labels=None):
+        apk = super().calculate(hits=hits)
         if apk is None:
             return None
         if self.drop_nan:
@@ -60,4 +60,39 @@ class MAP_K(AP_K):
         assert (counts > 0).all()
         mapk = (grouped_labels @ apk)/counts
         return (unique_labels, mapk)
+    
 
+class MRR(Metrics):
+    def __init__(self, drop_nan=True, per_class=False):
+        super().__init__(best_is="max")
+        self.drop_nan = drop_nan
+        self.per_class = per_class
+
+    def calculate(self, hits, labels=None):
+        hits = hits & (np.cumsum(hits, axis=1) == 1) #this is to make sure we are getting the first hit in each row
+        inds, top_rank = np.argwhere(hits)
+        top_rank = top_rank + 1 #shift ranks so start at 1 instead of 0
+
+        if not self.per_class:
+            n = len(top_rank) if self.drop_nan else len(hits)
+            return top_rank.sum()/n
+        if self.drop_nan:
+            labels = labels[inds]
+            reciprocal_rank = 1/top_rank
+        else:
+            reciprocal_rank = np.zeros(len(labels))
+            reciprocal_rank[inds] = (1/top_rank)
+        unique_labels = labels.unique()
+        grouped_labels = np.equal.outer(unique_labels, labels)
+        sum_rr = (grouped_labels @ reciprocal_rank)
+        counts = grouped_labels.sum(axis=1)
+        assert (counts > 0).all()
+        return (unique_labels, sum_rr/counts)
+    
+class Accuracy_K(Metrics):
+    def __init__(self, drop_nan=True, per_class=False):
+        super().__init__(best_is="max")
+        
+
+    
+            
