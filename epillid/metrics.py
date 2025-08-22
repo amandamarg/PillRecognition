@@ -26,15 +26,14 @@ class AP_K(Metrics):
             if not self.use_min:
                 return None
         
-        sum_prec_k = np.zeros(cols)
-        for i in range(1,k+1):
-            sum_prec_k += ((hits[:,:i].sum(axis=1)/i)*hits[:,i-1])
-    
+        top_k = hits[:,:k]
+        precisions = (top_k.cumsum(axis=1) * top_k)/np.arange(1,k+1)
+        summed_precisions = precisions.sum(axis=1)
         N = hits.sum(axis=1)
 
         replace_val = self.replace_nan if self.replace_nan is not None else np.nan
 
-        return np.where(N > 0, sum_prec_k/N, replace_val)
+        return np.where(N > 0, summed_precisions/N, replace_val)
 
 
 class MAP_K(AP_K):
@@ -89,10 +88,3 @@ class MRR(Metrics):
         assert (counts > 0).all()
         return (unique_labels, sum_rr/counts)
     
-class Accuracy_K(Metrics):
-    def __init__(self, drop_nan=True, per_class=False):
-        super().__init__(best_is="max")
-        
-
-    
-            
