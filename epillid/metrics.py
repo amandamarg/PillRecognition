@@ -125,17 +125,45 @@ class MetricTracker:
         if self.refs is not None:
             self.refs = []
 
-    def calculate_metrics(self):
-        self.batch_labels = np.array(self.batch_labels)
-        self.batch_logits = np.array(self.batch_logits)
-        self.batch_labels = np.array(self.batch_labels)
+    def embedding_hits(self):
+        batch_embeddings = np.array(self.batch_embeddings)
+        batch_labels = np.array(self.batch_labels)
         if self.refs is not None:
-            self.refs = np.array(self.refs)
-            ref_labels = self.batch_labels[self.refs]
-            ref_embeddings = self.batch_embeddings[self.refs]
-            cons_labels = self.batch_labels[~self.refs]
-            cons_embeddings = self.batch_embeddings[~self.refs]
+            refs = np.array(self.refs)
+            ref_labels = batch_labels[refs]
+            ref_embeddings = batch_embeddings[refs]
+            cons_labels = batch_labels[~refs]
+            cons_embeddings = batch_embeddings[~refs]
             distance_matrix = euclidean_distances(cons_embeddings, ref_embeddings)
-            sorted_distance_rankings = distance_matrix.argsort(axis=1)
-            same_labels = np.equal.outer(cons_labels, ref_labels)
-            
+            sorted_rankings = distance_matrix.argsort(axis=1)
+            same_labels = np.argwhere(np.equal.outer(cons_labels, ref_labels))
+            same_labels[:,1] = np.argwhere(sorted_rankings[:,0] == same_labels[:,1].reshape(-1,1)[:,1])[:,1]
+        else:
+            distance_matrix = euclidean_distances(batch_embeddings, batch_embeddings)
+            distances = distances - np.identity(len(distances)) #this is done to make sure that distances between same images are pushed to front when sorting, making them easy to exlude
+            sorted_rankings = distances.argsort(axis=1)
+            sorted_rankings = sorted_rankings[:,1:] #exclude same images
+            same_labels = np.argwhere(np.equal.outer(batch_labels, batch_labels))
+            same_labels = same_labels[same_labels[:,0] != same_labels[:,1]] #exclude same images
+
+        hits = np.zeros(sorted_rankings.shape)
+        hits[same_labels[:,0], same_labels[:,0]] = 1
+        return hits
+    
+    def logit_hits(self):
+        sorted_ranks = np.argsort(np.array(self.batch_logits), axis=1)
+        return (sorted_ranks == np.array(self.batch_labels).reshape(-1,1))
+
+    def update_metrics(self):
+        embedding_hits = self.embedding_hits()
+        for metric in self.embedding_metrics.values():
+            metric.calculate(embedding_hits, np.array(self.batch_labels), True)
+        
+        logit_hits = self.logit_hits()
+        for metric in self.logit_metrics.values():
+            metric.calculate(logit_hits, np.array(self.batch_labels), True)
+
+        self.clear_batch()
+
+
+
