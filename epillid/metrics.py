@@ -44,7 +44,7 @@ class Metrics:
     
 class AP_K(Metrics):
     def __init__(self, k, replace_nan=None, use_min=False, history=[], aggregation_mode=None, per_class=False, n_classes=None):
-        super().__init__(history=history, aggregation_mode=None, per_class=per_class, n_classes=n_classes)
+        super().__init__(history=history, aggregation_mode=aggregation_mode, per_class=per_class, n_classes=n_classes)
         self.k = k
         self.use_min = use_min #if True, then for an input where cols = # columns, will use the min(cols,k) for k, otherwise if cols < k, will return np.nan
         self.replace_nan = replace_nan
@@ -103,20 +103,28 @@ class MRR(Metrics):
         return metric_val
     
 class MetricTracker:
-    def __init__(self, logit_metrics, embedding_metrics, use_refs=False):
+    def __init__(self, logit_metrics, embedding_metrics, use_refs=False, split_embeddings=False, shift_back_labels=False, n_classes=None):
         self.logit_metrics = logit_metrics.deepcopy()
         self.embedding_metrics = embedding_metrics.deepcopy()
         self.batch_embeddings = []
         self.batch_logits = []
         self.batch_labels = []
         self.refs = [] if use_refs else None
+        self.split_embeddings = split_embeddings
+        self.shift_back_labels = shift_back_labels
+        self.front = None
+        if self.shift_back_labels and not self.split_embeddings:
+            self.front = []
+        self.n_classes = n_classes
 
-    def update_batch(self, embeddings, logits, labels, refs=None):
+    def update_batch(self, embeddings, logits, labels, refs=None, front=None):
         self.batch_embeddings.extend(embeddings)
         self.batch_logits.extend(logits)
         self.batch_labels.extend(labels)
         if self.refs is not None and refs is not None:
             self.refs.extend(refs)
+        if self.front is not None and front is not None:
+            self.front.extend(front)
     
     def clear_batch(self):
         self.batch_embeddings = []
@@ -124,12 +132,22 @@ class MetricTracker:
         self.batch_labels = []
         if self.refs is not None:
             self.refs = []
+        if self.front is not None:
+            self.front = []
 
     def embedding_hits(self):
         batch_embeddings = np.array(self.batch_embeddings)
         batch_labels = np.array(self.batch_labels)
+        if self.split_embeddings:
+            batch_embeddings = np.vstack(batch_embeddings.hsplit(2))
+            batch_labels = np.hstack((batch_labels, self.n_classes + batch_labels)) if self.shift_back_labels else np.hstack((batch_labels, batch_labels))
+        elif self.shift_back_labels:
+            batch_labels = np.where(batch_labels, batch_labels, batch_labels + self.n_classes)
+
         if self.refs is not None:
             refs = np.array(self.refs)
+            if self.split_embeddings:
+                refs = np.hstack((refs, refs))
             ref_labels = batch_labels[refs]
             ref_embeddings = batch_embeddings[refs]
             cons_labels = batch_labels[~refs]
