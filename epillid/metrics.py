@@ -118,13 +118,13 @@ class MetricTracker:
         self.n_classes = n_classes
 
     def update_batch(self, embeddings, logits, labels, refs=None, front=None):
-        self.batch_embeddings.extend(embeddings)
-        self.batch_logits.extend(logits)
-        self.batch_labels.extend(labels)
+        self.batch_embeddings.extend(embeddings.clone().detach())
+        self.batch_logits.extend(logits.clone().detach())
+        self.batch_labels.extend(labels.clone().detach())
         if self.refs is not None and refs is not None:
-            self.refs.extend(refs)
+            self.refs.extend(refs.clone().detach())
         if self.front is not None and front is not None:
-            self.front.extend(front)
+            self.front.extend(front.clone().detach())
     
     def clear_batch(self):
         self.batch_embeddings = []
