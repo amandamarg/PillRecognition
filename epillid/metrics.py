@@ -103,7 +103,7 @@ class MRR(Metrics):
         return metric_val
     
 class MetricTracker:
-    def __init__(self, logit_metrics, embedding_metrics, use_refs=False, split_embeddings=False, shift_back_labels=False, n_classes=None):
+    def __init__(self, logit_metrics, embedding_metrics, use_refs=False, split_embeddings=False, shift_side_labels=False, n_classes=None):
         self.logit_metrics = logit_metrics.deepcopy()
         self.embedding_metrics = embedding_metrics.deepcopy()
         self.batch_embeddings = []
@@ -111,9 +111,9 @@ class MetricTracker:
         self.batch_labels = []
         self.refs = [] if use_refs else None
         self.split_embeddings = split_embeddings
-        self.shift_back_labels = shift_back_labels
+        self.shift_side_labels = shift_side_labels
         self.front = None
-        if self.shift_back_labels and not self.split_embeddings:
+        if self.shift_side_labels and not self.split_embeddings:
             self.front = []
         self.n_classes = n_classes
 
@@ -140,8 +140,8 @@ class MetricTracker:
         batch_labels = np.array(self.batch_labels)
         if self.split_embeddings:
             batch_embeddings = np.vstack(batch_embeddings.hsplit(2))
-            batch_labels = np.hstack((batch_labels, self.n_classes + batch_labels)) if self.shift_back_labels else np.hstack((batch_labels, batch_labels))
-        elif self.shift_back_labels:
+            batch_labels = np.hstack((batch_labels, self.n_classes + batch_labels)) if self.shift_side_labels else np.hstack((batch_labels, batch_labels))
+        elif self.shift_side_labels:
             batch_labels = np.where(batch_labels, batch_labels, batch_labels + self.n_classes)
 
         if self.refs is not None:
@@ -173,15 +173,21 @@ class MetricTracker:
         return (sorted_ranks == np.array(self.batch_labels).reshape(-1,1))
 
     def update_metrics(self):
+        outputs = {}
         embedding_hits = self.embedding_hits()
-        for metric in self.embedding_metrics.values():
-            metric.calculate(embedding_hits, np.array(self.batch_labels), True)
-        
+        for metric_name, metric in self.embedding_metrics.items():
+            key = "embedding_" + metric_name
+            outputs[key] = metric.calculate(embedding_hits, np.array(self.batch_labels), True)
         logit_hits = self.logit_hits()
-        for metric in self.logit_metrics.values():
-            metric.calculate(logit_hits, np.array(self.batch_labels), True)
+        for metric_name, metric in self.logit_metrics.items():
+            key = "logits_" + metric_name
+            outputs[key] = metric.calculate(logit_hits, np.array(self.batch_labels), True)
 
         self.clear_batch()
+        return outputs
 
 
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    
 

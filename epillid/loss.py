@@ -4,59 +4,58 @@ from pytorch_metric_learning import losses
 import numpy as np
 
 class ModelLoss(nn.Module):
-    def __init__(self, n_classes, loss_types, loss_weights, miner=None, split_embeddings=False, shift_back_labels=False):
+    def __init__(self, n_classes, loss_types, loss_weights, split_embeddings=False, shift_side_labels=False):
         super(ModelLoss, self).__init__()
         self.n_classes = n_classes
         self.loss_types = loss_types
         self.loss_weights = loss_weights
-        self.miner = miner
         self.split_embeddings = split_embeddings #whether we should split embeddings to calculate embedding loss
-        self.shift_back_labels = shift_back_labels #whether we should shift back_labels
+        self.shift_side_labels = shift_side_labels #whether we should shift labels of backside images
     
-    def forward(self, embeddings, logits, labels, is_front=None):
+    def forward(self, embeddings, logits, labels, is_front=None, is_ref=None):
         device = embeddings.device.type
         assert logits.device.type == device and labels.device.type == device
         if is_front is not None:
             assert is_front.device.type == device
-            
+        
+        losses = {}
+        weighted_loss = torch.Tensor(0.0, device=device)
         if self.split_embeddings:
-            classifier_loss = self.loss_types['classifier'](logits, labels)
+            for loss_name,loss_func = in self.loss_types['logit'].items():
+                losses[loss_name] = loss_func(logits, labels)
+                weighted_loss += (self.loss_weights[loss_name] * losses[loss_name])
             embeddings = torch.vstack(embeddings.hsplit(2))
             labels = labels.clone().detach()
-            labels = torch.hstack((labels, self.n_classes + labels)) if self.shift_back_labels else torch.hstack((labels, labels))
+            labels = torch.hstack((labels, self.n_classes + labels)) if self.shift_side_labels else torch.hstack((labels, labels))
         else:
-            if self.shift_back_labels:
+            if self.shift_side_labels:
                 assert is_front is not None
                 labels = labels.clone().detach()
                 labels = torch.where(is_front, labels, labels+self.n_classes) 
-            classifier_loss = self.loss_types['classifier'](logits, labels)
+           for loss_name,loss_func = in self.loss_types['logit'].items():
+                losses[loss_name] = loss_func(logits, labels)
+                weighted_loss += (self.loss_weights[loss_name] * losses[loss_name])
 
-        if self.miner is not None:
-            mined_output = self.miner(embeddings, labels)
-            embedding_loss = self.loss_types['embedding'](embeddings, labels, mined_output)
-        else:
-            embedding_loss = self.loss_types['embedding'](embeddings, labels)
-        total_loss = self.loss_weights['embedding']*embedding_loss.clone().detach() + self.loss_weights['classifier']*classifier_loss.clone().detach()
-        return {"embedding": embedding_loss, "classifier": classifier_loss, "total": total_loss}
+        for loss_name,loss_func = in self.loss_types['embedding'].items():
+            losses[loss_name] = loss_func(embeddings, labels)
+            weighted_loss += (self.loss_weights[loss_name] * losses[loss_name])
+        
+        losses['total'] = weighted_loss
+        return losses
+class TripletLoss(nn.Module):
+    def __init__(self, miner, triplet_loss):
+        super(TripletLoss, self).__init__()
+        self.miner = miner
+        self.triplet_loss = triplet_loss
+
+    def forward(self, embeddings, labels):
+        triplets = self.miner(embeddings, labels)
+        return self.triplet_loss(embeddings, labels, triplets)
 
 class LossTracker:
-    def __init__(self, prev_loss_history=None):
-        self.curr_epoch = 0
-        self.loss_history = {"embedding": [], "classifier": [], "total": []}
-        if prev_loss_history is not None:
-            for k,v in prev_loss_history.items():
-                self.loss_history[k].extend(v)
-            self.curr_epoch = len(prev_loss_history["total"])
-        self.curr_loss = {"embedding": [], "classifier": [], "total": []}
-        
-    def get_loss_history(self, epoch=None):
-        if epoch is None:
-            return self.loss_history
-        else:
-            output = {}
-            for k,v in self.loss_history.items():
-                output[k] = v[epoch]
-            return output
+    def __init__(self):
+        self.loss_history = {}
+        self.curr_loss = {}
 
     def best_loss(self):
         best_epoch = {}
@@ -65,13 +64,38 @@ class LossTracker:
             if len(v) > 0:
                 best_epoch[k] = np.argmin(v)
                 best_val[k] = np.min(v)
+            else:
+                best_epoch[k] = None
+                best_val[k] = None
         return best_epoch, best_val
     
     def update_curr_loss(self, loss_type, loss_val):
-        self.curr_loss[loss_type].append(loss_val.clone().detach().item())
+        if loss_type in self.loss_history.keys():
+            self.curr_loss[loss_type].append(loss_val.item())
+        else:
+            self.curr_loss[loss_type] = [loss_val.item()]
 
     def update_loss_history(self):
+        outputs = {}
         for k,v in self.curr_loss.items():
-            self.loss_history[k].append(np.sum(v)/len(v))
+            outputs[k] = np.sum(v)/len(v)
+            self.loss_history[k].append(outputs[k])
             self.curr_loss[k] = []
-        self.curr_epoch += 1
+        return outputs
+
+if __name__ == "__main__":
+    loss_types = {'embedding': {}, 'logit': {}}
+    loss_types['embedding']['triplet'] = TripletLoss(miner=miners.TripletMarginMiner(margin=0.2, type_of_triplets="hard"), triplet_loss=losses.TripletMarginLoss())
+    loss_types['logit']['cross_entropy'] = nn.CrossEntropyLoss()
+    loss_weights = {'triplet': 1.0, 'cross_entropy': 1.0}
+
+    num_samples = 25
+    num_classes = 10
+    size_embedding = 100
+    torch.manual_seed(0)
+    
+    sample_labels = torch.randint(0,num_classes, (num_samples,))
+    sample_embeddings = torch.rand((num_samples,size_embedding))
+    sample_logits = (torch.rand((num_samples,n_classes)) - .5)
+
+    criterion = ModelLoss(n, loss_types, loss_weights, False, False)

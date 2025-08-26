@@ -36,19 +36,5 @@ class ModelWrapper(nn.Module):
         logits = self.classifier(embeddings)
         return embeddings, logits
     
-    def split_embeddings(self, embeddings, labels=None, shift=False):
-        if self.two_sided:
-            embeddings = torch.vstack(embeddings.hsplit(2))
-            if labels is not None:
-                labels = torch.hstack((labels, self.n_classes + labels)) if shift else torch.hstack((labels, labels))
-        return embeddings, labels
-
-    def shift_labels(self, labels, is_front=None):
-        if is_front is None:
-            return labels + self.n_classes
-        return torch.where(is_front, labels, labels + self.n_classes)
-
-
-    
     
     
