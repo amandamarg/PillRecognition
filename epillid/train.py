@@ -270,11 +270,15 @@ class Trainer:
         for i in range(num_epochs):
             self.train_loop()
             self.val_loop()
+
             if (i%checkpoint) == 0:
                 filename = model_name + '_epoch_' + str(i)
                 path = os.path.join(save_dir, filename)
                 torch.save(self.model, path)
                 print("Saved to " + path)
+
+            for lr_scheduler in self.lr_schedulers:
+                lr_scheduler.step()
         if ((num_epochs-1)%checkpoint) != 0:
             filename = model_name + '_epoch_' + str(num_epochs-1)
             path = os.path.join(save_dir, filename)

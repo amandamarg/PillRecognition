@@ -12,14 +12,15 @@ class Classifier(nn.Module):
         return self.fc(normalized_input * self.scaler)
 
 
-class MyModel(nn.Module):
+class ModelWrapper(nn.Module):
     def __init__(self, n_classes, embedding_model, two_sided):
-        super(MyModel, self).__init__()
+        super(ModelWrapper, self).__init__()
         self.two_sided = two_sided
         self.embedding_size = embedding_model.fc.in_features
         #if two_sided, classifier will take in the concatenation of the embedding of the front-side image and the embedding of the back-side image
         if self.two_sided:
             self.embedding_size = 2*self.embedding_size
+        self.n_classes = n_classes
         embedding_model.fc = torch.nn.Identity()
         self.embedding_model = embedding_model
         self.classifier = Classifier(self.embedding_size, n_classes)
@@ -34,3 +35,20 @@ class MyModel(nn.Module):
         embeddings = self.embedding_model(input)
         logits = self.classifier(embeddings)
         return embeddings, logits
+    
+    def split_embeddings(self, embeddings, labels=None, shift=False):
+        if self.two_sided:
+            embeddings = torch.vstack(embeddings.hsplit(2))
+            if labels is not None:
+                labels = torch.hstack((labels, self.n_classes + labels)) if shift else torch.hstack((labels, labels))
+        return embeddings, labels
+
+    def shift_labels(self, labels, is_front=None):
+        if is_front is None:
+            return labels + self.n_classes
+        return torch.where(is_front, labels, labels + self.n_classes)
+
+
+    
+    
+    
