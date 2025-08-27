@@ -19,7 +19,7 @@ class ModelLoss(nn.Module):
             assert is_front.device.type == device
         
         losses = {}
-        weighted_loss = torch.Tensor(0.0, device=device)
+        weighted_loss = torch.Tensor([0.0]).to(device)
         if self.split_embeddings:
             for loss_name,loss_func in self.loss_types['logit'].items():
                 losses[loss_name] = loss_func(logits, labels)
@@ -79,7 +79,10 @@ class LossTracker:
         outputs = {}
         for k,v in self.curr_loss.items():
             outputs[k] = np.sum(v)/len(v)
-            self.loss_history[k].append(outputs[k])
+            if k not in self.loss_history.keys():
+                self.loss_history[k] = [outputs[k]]
+            else:
+                self.loss_history[k].append(outputs[k])
             self.curr_loss[k] = []
         return outputs
 

@@ -1,5 +1,5 @@
 from sklearn.metrics.pairwise import  euclidean_distances
-from sklearn.metrics import top_k_accuracy_score
+from sklearn.metrics import top_k_accuracy_score, average_precision_score
 import numpy as np 
 import torch
 from utils import embed_all
@@ -60,13 +60,13 @@ def ap_k(hits, k):
         k = m
 
 
-    sum_prec_k = np.zeros(n)
-    for i in range(1,k+1):
-        sum_prec_k += ((hits[:,:i].sum(axis=1)/i)*hits[:,i-1])
-    
+    top_k = hits[:,:k]
+    precisions = (top_k.cumsum(axis=1) * top_k)/np.arange(1,k+1)
+    summed_precisions = precisions.sum(axis=1)
     N = hits.sum(axis=1)
 
-    return sum_prec_k/np.where(N > 0, N, np.nan)
+
+    return np.where(N > 0, summed_precisions/N, np.nan)
 
 def map_k(hits, k, replace_nan=None, per_class=False, labels=None):
     ''' 
@@ -136,10 +136,9 @@ def eval_embeddings(labels, embeddings, ref_labels=None, ref_embeddings=None):
 
         hits, = get_hits(labels, embeddings, ref_labels, ref_embeddings)
 
-    return {'map_1': map_k(hits, 1), 'map_5': map_k(hits, 5), 'MRR': MRR_embed(hits)}
+    return {'map_1': map_k(hits, 1), 'map_5': map_k(hits, 5), 'MRR': MRR_embed(hits), }
 
 def eval_logits(labels, logits):
     assert labels.device.type=='cpu' and logits.device.type=='cpu'
     all_labels = np.arange(start=0,stop=logits.shape[1])
     return {'top_1_accuracy': top_k_accuracy_score(labels, logits, k=1, labels=all_labels), 'top_5_accuracy':top_k_accuracy_score(labels, logits, k=5, labels=all_labels), 'MRR': MRR(labels, logits)}
-

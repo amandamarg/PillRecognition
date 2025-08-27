@@ -42,10 +42,11 @@ class PillImages(Dataset):
 
 
 class TwoSidedPillImages(Dataset):
-    def __init__(self, front_df, back_df, transform=None, augment=None, labelcol="pilltype_id", label_encoder=None):
+    def __init__(self, front_df, back_df, phase, transform=None, augment=None, labelcol="pilltype_id", label_encoder=None):
         assert len(front_df) == len(back_df)
         self.front_df = front_df
         self.back_df = back_df
+        self.phase = phase
         self.transform = transform
         self.augment = augment
         assert (self.front_df[labelcol].values == self.back_df[labelcol].values).all()

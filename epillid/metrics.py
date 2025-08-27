@@ -4,12 +4,15 @@ import numpy as np
 import torch
 import warnings
 
+
+
 class Metrics:
-    def __init__(self, history=[], aggregation_mode=None, per_class=False, n_classes=None):
+    def __init__(self, history=[], aggregation_mode=None, per_class=False, n_classes=None, replace_nan=None):
         assert aggregation_mode in ["min", "max", "sum", "avg", None]
         self.aggregation_mode = aggregation_mode
         self.history = history.copy()
         self.per_class = per_class
+        self.replace_nan = replace_nan
         if per_class:
             assert n_classes is not None
             self.n_classes = n_classes
@@ -29,8 +32,8 @@ class Metrics:
         elif self.aggregation_mode == "avg":
             if counts is None:
                 counts = len(metric_vals)
-            counts = counts - (metric_vals.isnan()).sum(axis=int(self.per_class))
-            return metric_vals.nansum(axis=int(self.per_class))/counts
+            counts = counts - (~np.isnan(metric_vals)).sum(axis=int(self.per_class))
+            return np.nansum(metric_vals,axis=int(self.per_class))/counts
         else:
             return metric_vals
         
@@ -43,11 +46,10 @@ class Metrics:
 
     
 class AP_K(Metrics):
-    def __init__(self, k, replace_nan=None, use_min=False, history=[], aggregation_mode=None, per_class=False, n_classes=None):
-        super().__init__(history=history, aggregation_mode=aggregation_mode, per_class=per_class, n_classes=n_classes)
+    def __init__(self, k, use_min=False, history=[], aggregation_mode=None, per_class=False, n_classes=None, replace_nan=None):
+        super().__init__(history=history, aggregation_mode=aggregation_mode, per_class=per_class, n_classes=n_classes, replace_nan=replace_nan)
         self.k = k
         self.use_min = use_min #if True, then for an input where cols = # columns, will use the min(cols,k) for k, otherwise if cols < k, will return np.nan
-        self.replace_nan = replace_nan
 
     def calculate(self, hits, labels=None, update_history=True):
         _,cols = hits.shape
@@ -67,27 +69,27 @@ class AP_K(Metrics):
 
         if self.per_class:
             grouped_labels = np.equal.outer(np.arange(self.n_classes), labels)
-            metric_vals = grouped_labels * metric_vals
+            metric_val = grouped_labels * metric_val
             counts = grouped_labels.sum(axis=1)
         else:
             counts = hits.sum()
         
-        metric_val = self.aggregate(metric_vals, counts)
+        metric_val = self.aggregate(metric_val, counts)
         if update_history:
             self.history.append(metric_val)
         return metric_val
 
 class MAP_K(AP_K):
-    def __init__(self, k, replace_nan=None, use_min=False, history=[], per_class=False, n_classes=None):
-        super().__init__(k=k, replace_nan=replace_nan, use_min=use_min, history=history, aggregation_mode="avg", per_class=per_class, n_classes=n_classes)
+    def __init__(self, k, use_min=False, history=[], per_class=False, n_classes=None, replace_nan=None):
+        super().__init__(k=k, use_min=use_min, history=history, aggregation_mode="avg", per_class=per_class, n_classes=n_classes, replace_nan=replace_nan)
 
 class MRR(Metrics):
-    def __init__(self, history=[], per_class=False, n_classes=None):
-        super().__init__(history=history, aggregation_mode="avg", per_class=per_class, n_classes=n_classes)
+    def __init__(self, history=[], per_class=False, n_classes=None, replace_nan=None):
+        super().__init__(history=history, aggregation_mode="avg", per_class=per_class, n_classes=n_classes, replace_nan=replace_nan)
 
     def calculate(self, hits, labels=None, update_history=True):
-        hits = hits & (np.cumsum(hits, axis=1) == 1) #this is to make sure we are getting the first hit in each row
-        inds, top_rank = np.argwhere(hits)
+        hits = np.logical_and(hits.astype(bool), (np.cumsum(hits, axis=1) == 1)) #this is to make sure we are getting the first hit in each row
+        top_rank = np.argwhere(hits)[:,1]
         top_rank = top_rank + 1 #shift ranks so start at 1 instead of 0
         replace_val = self.replace_nan if self.replace_nan is not None else np.nan
         reciprocal_ranks = np.where(top_rank > 0, 1/top_rank, replace_val)
@@ -103,9 +105,10 @@ class MRR(Metrics):
         return metric_val
     
 class MetricTracker:
-    def __init__(self, logit_metrics, embedding_metrics, use_refs=False, split_embeddings=False, shift_side_labels=False, n_classes=None):
-        self.logit_metrics = logit_metrics.deepcopy()
-        self.embedding_metrics = embedding_metrics.deepcopy()
+    def __init__(self, logit_metrics, embedding_metrics, phase, use_refs=False, split_embeddings=False, shift_side_labels=False, n_classes=None):
+        self.logit_metrics = logit_metrics
+        self.embedding_metrics = embedding_metrics
+        self.phase = phase
         self.batch_embeddings = []
         self.batch_logits = []
         self.batch_labels = []
@@ -118,13 +121,13 @@ class MetricTracker:
         self.n_classes = n_classes
 
     def update_batch(self, embeddings, logits, labels, refs=None, front=None):
-        self.batch_embeddings.extend(embeddings.clone().detach())
-        self.batch_logits.extend(logits.clone().detach())
-        self.batch_labels.extend(labels.clone().detach())
+        self.batch_embeddings.extend(embeddings.clone().detach().cpu())
+        self.batch_logits.extend(logits.clone().detach().cpu())
+        self.batch_labels.extend(labels.clone().detach().cpu())
         if self.refs is not None and refs is not None:
-            self.refs.extend(refs.clone().detach())
+            self.refs.extend(refs.clone().detach().cpu())
         if self.front is not None and front is not None:
-            self.front.extend(front.clone().detach())
+            self.front.extend(front.clone().detach().cpu())
     
     def clear_batch(self):
         self.batch_embeddings = []
@@ -155,32 +158,32 @@ class MetricTracker:
             distance_matrix = euclidean_distances(cons_embeddings, ref_embeddings)
             sorted_rankings = distance_matrix.argsort(axis=1)
             same_labels = np.argwhere(np.equal.outer(cons_labels, ref_labels))
-            same_labels[:,1] = np.argwhere(sorted_rankings[:,0] == same_labels[:,1].reshape(-1,1)[:,1])[:,1]
         else:
             distance_matrix = euclidean_distances(batch_embeddings, batch_embeddings)
-            np.fill_diagonal(distances, -np.inf) #this is done to make sure that distances between same images are pushed to front when sorting, making them easy to exlude
-            sorted_rankings = distances.argsort(axis=1)
-            sorted_rankings = sorted_rankings[:,1:] #exclude same images
+            np.fill_diagonal(distance_matrix, np.inf) #this is done to make sure that distances between same images are pushed to back when sorting so we can exclude them easily
+            sorted_rankings = distance_matrix.argsort(axis=1)
+            sorted_rankings = sorted_rankings[:,:-1] #exclude same images
             same_labels = np.argwhere(np.equal.outer(batch_labels, batch_labels))
             same_labels = same_labels[same_labels[:,0] != same_labels[:,1]] #exclude same images
 
+        same_labels[:,1] = np.argwhere(sorted_rankings[same_labels[:,0]] == same_labels[:,1].reshape(-1,1))[:,1]
         hits = np.zeros(sorted_rankings.shape)
-        hits[same_labels[:,0], same_labels[:,0]] = 1
+        hits[same_labels[:,0], same_labels[:,1]] = 1
         return hits
     
-    def logit_hits(self):
-        sorted_ranks = np.argsort(np.array(self.batch_logits), axis=1)
+    def logit_hits(self): #assumes only one class per sample
+        sorted_ranks = np.argsort(-1*np.array(self.batch_logits), axis=1)
         return (sorted_ranks == np.array(self.batch_labels).reshape(-1,1))
 
     def update_metrics(self):
         outputs = {}
         embedding_hits = self.embedding_hits()
         for metric_name, metric in self.embedding_metrics.items():
-            key = "embedding_" + metric_name
+            key = self.phase + "_embedding_" + metric_name
             outputs[key] = metric.calculate(embedding_hits, np.array(self.batch_labels), True)
         logit_hits = self.logit_hits()
         for metric_name, metric in self.logit_metrics.items():
-            key = "logits_" + metric_name
+            key = self.phase + "_logits_" + metric_name
             outputs[key] = metric.calculate(logit_hits, np.array(self.batch_labels), True)
 
         self.clear_batch()
