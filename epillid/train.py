@@ -184,8 +184,8 @@ class Trainer:
         self.two_sided = two_sided
         self.use_side_labels = use_side_labels 
         self.use_ref = use_ref
-        self.train_loss_tracker = LossTracker()
-        self.val_loss_tracker = LossTracker()
+        self.train_loss_tracker = loss.LossTracker()
+        self.val_loss_tracker = loss.LossTracker()
         self.train_metrics_tracker = train_metrics_tracker
         self.val_metrics_tracker = val_metrics_tracker
         self.writer = SummaryWriter()
@@ -198,9 +198,9 @@ class Trainer:
             is_front = data[2].to(self.device) if (self.two_sided and self.use_side_labels) else None
 
             if self.use_ref:
-                ref = data[2].to(self.device) is self.two_sided else data[3].to(self.device)
+                is_ref = data[2].to(self.device) if self.two_sided else data[3].to(self.device)
             else:
-                ref = None
+                is_ref = None
 
             for opt in self.optimizers:
                 opt.zero_grad()
@@ -220,26 +220,26 @@ class Trainer:
             for k,v in loss:
                 self.train_loss_tracker.update_curr_loss(k,v)
 
-            self.train_metrics_tracker.update_batch(embeddings, logits, labels, refs, is_front)
+            self.train_metrics_tracker.update_batch(embeddings, logits, labels, is_ref, is_front)
                     
     def val_loop(self):
         self.model.eval()
         for i,data in enumerate(tqdm(self.dataloaders["val"], total=len(self.dataloaders["val"]))):
-            labels ={ data[0].to(self.device)
-            imgs = data[1].to(self.device)}
+            labels =data[0].to(self.device)
+            imgs = data[1].to(self.device)
             is_front = data[2].to(self.device) if (self.two_sided and self.use_side_labels) else None
 
             if self.use_ref:
-                ref = data[2].to(self.device) is self.two_sided else data[3].to(self.device)
+                is_ref = data[2].to(self.device) if self.two_sided else data[3].to(self.device)
             else:
-                ref = None
+                is_ref = None
             with torch.set_grad_enabled(True):
                 embeddings, logits = self.model(imgs)
                 loss = self.loss_func(embeddings, labels, is_front, is_ref)
             for k,v in loss:
                 self.val_loss_tracker.update_curr_loss(k,v)
 
-            self.val_metrics_tracker.update_batch(embeddings, logits, labels, refs, is_front)
+            self.val_metrics_tracker.update_batch(embeddings, logits, labels, is_ref, is_front)
 
 
     def train(self, model_name, num_epochs, checkpoint=3, save_dir='/Users/Amanda/Desktop/PillRecognition/model'):
@@ -247,24 +247,24 @@ class Trainer:
             self.train_loop()
             train_loss = self.train_loss_tracker.update_loss_history()
             for k,v in train_loss:
-                writer.add_scalar('train_' + k, v, i)
+                self.writer.add_scalar('train_' + k, v, i)
             train_metrics = self.train_metrics_tracker.update_metrics()
             for k,v in train_metrics:
                 if len(v) > 1:
-                    writer.add_scalars('train_' + k, dict(zip(np.arange(len(v)), v)), i)
+                    self.writer.add_scalars('train_' + k, dict(zip(np.arange(len(v)), v)), i)
                 else:
-                    writer.add_scalar('train_' + k, v, i)
+                    self.writer.add_scalar('train_' + k, v, i)
 
             self.val_loop()
             val_loss = self.val_loss_tracker.update_loss_history()
             for k,v in val_loss:
-                writer.add_scalar('val_' + k, v, i)
+                self.writer.add_scalar('val_' + k, v, i)
             val_metrics = self.val_metrics_tracker.update_metrics()
             for k,v in val_metrics:
                 if len(v) > 1:
-                    writer.add_scalars('val_' + k, dict(zip(np.arange(len(v)), v)), i)
+                    self.writer.add_scalars('val_' + k, dict(zip(np.arange(len(v)), v)), i)
                 else:
-                    writer.add_scalar('val_' + k, v, i)
+                    self.writer.add_scalar('val_' + k, v, i)
 
             if (i%checkpoint) == 0:
                 filename = model_name + '_epoch_' + str(i)
@@ -277,19 +277,31 @@ class Trainer:
                     lr_scheduler.step(metric=self.val_loss_tracker['total'])
                 else:
                     lr_scheduler.step()
-        writer.flush()
-        writer.close()
+        self.writer.flush()
+        self.writer.close()
         if ((num_epochs-1)%checkpoint) != 0:
             filename = model_name + '_epoch_' + str(num_epochs-1)
             path = os.path.join(save_dir, filename)
             torch.save(self.model, path)
             print("Saved to " + path)
 
-if __name__ == "__main__":
-    loss_types = {'embedding': {}, 'logit': {}}
-    loss_types['embedding']['triplet'] = loss.TripletLoss(miner=miners.TripletMarginMiner(margin=0.2, type_of_triplets="hard"), triplet_loss=losses.TripletMarginLoss())
-    loss_types['logit']['cross_entropy'] = nn.CrossEntropyLoss()
-    loss_weights = {'triplet': 1.0, 'cross_entropy': 1.0}
+# if __name__ == "__main__":
+#     dataloaders = {"train": , "val": }
 
+#     model = ModelWrapper(,resnet50(weights=ResNet50_Weights.DEFAULT), False)
+    
+#     loss_types = {'embedding': {}, 'logit': {}}
+#     loss_types['embedding']['triplet'] = loss.TripletLoss(miner=miners.TripletMarginMiner(margin=0.2, type_of_triplets="hard"), triplet_loss=losses.TripletMarginLoss())
+#     loss_types['logit']['cross_entropy'] = nn.CrossEntropyLoss()
+#     loss_weights = {'triplet': 1.0, 'cross_entropy': 1.0}
+#     criterion = loss.ModelLoss(n, loss_types, loss_weights, False, False)
 
+#     optimizers = [optim.Adam(model.parameters(), lr=0.01)]
+#     lr_schedulers = [optim.lr_scheduler.ReduceLROnPlateau(optimizers[0])]
+#     device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+
+#     train_metric_tracker = MetricTracker([metrics.MAP_K(5,use_min=True), MRR()], [metrics.MAP_K(5,use_min=True), MRR()])
+#     val_metric_tracker = MetricTracker([metrics.MAP_K(5,use_min=True), MRR()], [metrics.MAP_K(5,use_min=True), MRR()])
+
+#     trainer = Trainer(device, model, , True, optimizers, lr_schedulers, criterion)
 

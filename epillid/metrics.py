@@ -158,7 +158,7 @@ class MetricTracker:
             same_labels[:,1] = np.argwhere(sorted_rankings[:,0] == same_labels[:,1].reshape(-1,1)[:,1])[:,1]
         else:
             distance_matrix = euclidean_distances(batch_embeddings, batch_embeddings)
-            distances = distances - np.identity(len(distances)) #this is done to make sure that distances between same images are pushed to front when sorting, making them easy to exlude
+            np.fill_diagonal(distances, -np.inf) #this is done to make sure that distances between same images are pushed to front when sorting, making them easy to exlude
             sorted_rankings = distances.argsort(axis=1)
             sorted_rankings = sorted_rankings[:,1:] #exclude same images
             same_labels = np.argwhere(np.equal.outer(batch_labels, batch_labels))
@@ -189,5 +189,5 @@ class MetricTracker:
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    
+
 

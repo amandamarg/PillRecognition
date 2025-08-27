@@ -21,7 +21,7 @@ class ModelLoss(nn.Module):
         losses = {}
         weighted_loss = torch.Tensor(0.0, device=device)
         if self.split_embeddings:
-            for loss_name,loss_func = in self.loss_types['logit'].items():
+            for loss_name,loss_func in self.loss_types['logit'].items():
                 losses[loss_name] = loss_func(logits, labels)
                 weighted_loss += (self.loss_weights[loss_name] * losses[loss_name])
             embeddings = torch.vstack(embeddings.hsplit(2))
@@ -32,11 +32,11 @@ class ModelLoss(nn.Module):
                 assert is_front is not None
                 labels = labels.clone().detach()
                 labels = torch.where(is_front, labels, labels+self.n_classes) 
-           for loss_name,loss_func = in self.loss_types['logit'].items():
+            for loss_name,loss_func in self.loss_types['logit'].items():
                 losses[loss_name] = loss_func(logits, labels)
                 weighted_loss += (self.loss_weights[loss_name] * losses[loss_name])
 
-        for loss_name,loss_func = in self.loss_types['embedding'].items():
+        for loss_name,loss_func in self.loss_types['embedding'].items():
             losses[loss_name] = loss_func(embeddings, labels)
             weighted_loss += (self.loss_weights[loss_name] * losses[loss_name])
         
@@ -93,7 +93,7 @@ if __name__ == "__main__":
     num_classes = 10
     size_embedding = 100
     torch.manual_seed(0)
-    
+
     sample_labels = torch.randint(0,num_classes, (num_samples,))
     sample_embeddings = torch.rand((num_samples,size_embedding))
     sample_logits = (torch.rand((num_samples,n_classes)) - .5)

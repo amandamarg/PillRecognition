@@ -78,3 +78,18 @@ def front_back_pairs(df, labelcol):
         if k > 0:
             pairs.extend(list(zip(front.iloc[:k].index.to_numpy(), back.iloc[:k].index.to_numpy())))
     return np.array(pairs)
+
+
+def get_triplets(labels, ref_labels=None):
+    if ref_labels is None:
+        one_hot_labels = np.equal.outer(labels, labels)
+        pos_pairs = np.argwhere(one_hot_labels)
+        pos_pairs = pos_pairs[pos_pairs[:,0] != pos_pairs[:,1]]
+    else:
+        one_hot_labels = np.equal.outer(labels, ref_labels)
+        pos_pairs = np.argwhere(one_hot_labels)
+    neg_pairs = np.argwhere(~one_hot_labels)
+    same_anchors = np.argwhere(np.equal.outer(pos_pairs[:,0], neg_pairs[:,0]))
+    triplets = np.column_stack((pos_pairs[same_anchors[:,0]], neg_pairs[same_anchors[:,1]][:,1]))
+    return triplets
+    
