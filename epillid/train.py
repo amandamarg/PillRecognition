@@ -26,7 +26,7 @@ import metrics
 from dataset import CustomBatchSamplerPillID
 
 class Trainer:
-    def __init__(self, device, model, dataloaders, clip_gradients, optimizers, lr_schedulers, criterion, two_sided, use_side_labels, use_ref, train_metrics_tracker, val_metrics_tracker):
+    def __init__(self, device, model, dataloaders, clip_gradients, optimizers, lr_schedulers, criterion, two_sided, use_side_labels, use_ref, train_metrics_tracker, val_metrics_tracker, model_dir='./models', log_dir='./logs'):
         self.device = device
         self.model = model.to(device)
         self.dataloaders = dataloaders
@@ -41,7 +41,11 @@ class Trainer:
         self.val_loss_tracker = loss.LossTracker()
         self.train_metrics_tracker = train_metrics_tracker
         self.val_metrics_tracker = val_metrics_tracker
-        self.writer = SummaryWriter()
+        self.model_dir = model_dir
+        self.log_dir = log_dir
+        os.makedirs(model_dir, exist_ok=True)
+        os.makedirs(log_dir, exist_ok=True)
+        self.writer = SummaryWriter(log_dir=self.log_dir)
         
     def train_loop(self):
         self.model.train()
@@ -95,7 +99,9 @@ class Trainer:
             self.val_metrics_tracker.update_batch(embeddings, logits, labels, is_ref, is_front)
 
 
-    def train(self, model_name, num_epochs, checkpoint=3, save_dir='/Users/Amanda/Desktop/PillRecognition/model'):
+    def train(self, num_epochs, checkpoint=3, sub_dir=None):
+        save_path = self.model_dir if sub_dir is None else os.path.join(self.model_dir, sub_dir)
+        os.makedirs(save_path, exist_ok=True)
         for i in range(num_epochs):
             self.train_loop()
             train_loss = self.train_loss_tracker.update_loss_history()
@@ -103,6 +109,8 @@ class Trainer:
                 self.writer.add_scalar('train_' + k, v, i)
             train_metrics = self.train_metrics_tracker.update_metrics()
             for k,v in train_metrics.items():
+                print(k)
+                print(v)
                 if isinstance(v, float):
                     self.writer.add_scalar('train_' + k, v, i)
                 else:
@@ -120,8 +128,8 @@ class Trainer:
                     self.writer.add_scalars('val_' + k, dict(zip(np.arange(len(v)), v)), i)
 
             if (i%checkpoint) == 0:
-                filename = model_name + '_epoch_' + str(i)
-                path = os.path.join(save_dir, filename)
+                filename = 'epoch_' + str(i)
+                path = os.path.join(save_path, filename)
                 torch.save(self.model, path)
                 print("Saved to " + path)
 
@@ -132,9 +140,10 @@ class Trainer:
                     lr_scheduler.step()
         self.writer.flush()
         self.writer.close()
+        print("Logs saved to ", self.log_dir)
         if ((num_epochs-1)%checkpoint) != 0:
-            filename = model_name + '_epoch_' + str(num_epochs-1)
-            path = os.path.join(save_dir, filename)
+            filename = '_epoch_' + str(num_epochs-1)
+            path = os.path.join(save_path, filename)
             torch.save(self.model, path)
             print("Saved to " + path)
 
@@ -163,6 +172,6 @@ if __name__ == "__main__":
     train_metric_tracker = metrics.MetricTracker({'map_5':metrics.MAP_K(5,use_min=True),'mrr': metrics.MRR()}, {'map_5': metrics.MAP_K(5,use_min=True), 'mrr': metrics.MRR()}, 'train')
     val_metric_tracker = metrics.MetricTracker({'map_5':metrics.MAP_K(5,use_min=True),'mrr': metrics.MRR()}, {'map_5': metrics.MAP_K(5,use_min=True), 'mrr': metrics.MRR()}, 'val')
 
-    trainer = Trainer(device, model, dataloaders, True, optimizers, lr_schedulers, criterion, two_sided=False, use_side_labels=False, use_ref=False, train_metrics_tracker=train_metric_tracker, val_metrics_tracker=val_metric_tracker)
-    trainer.train("model_test", 3, 1)
+    trainer = Trainer(device, model, dataloaders, True, optimizers, lr_schedulers, criterion, two_sided=False, use_side_labels=False, use_ref=False, train_metrics_tracker=train_metric_tracker, val_metrics_tracker=val_metric_tracker, model_dir='./epillid/models', log_dir='./epillid/logs')
+    trainer.train(num_epochs=1, checkpoint=1)
 
