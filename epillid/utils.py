@@ -13,8 +13,8 @@ def load_data(data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata', 
     all_imgs_csv = [x for x in csv_files if x.endswith("all.csv")][0]
     folds = sorted([x for x in csv_files if not x.endswith("all.csv")])
     all_imgs_df = pd.read_csv(all_imgs_csv)
-    all_imgs_df['image_path'] = all_imgs_df['image_path'].apply(lambda x: os.path.join(data_root_dir, 'classification_data', x))
     fold_indicies = [np.where(all_imgs_df.image_path.isin(pd.read_csv(fold).image_path))[0] for fold in folds]
+    all_imgs_df['image_path'] = all_imgs_df['image_path'].apply(lambda x: os.path.join(data_root_dir, 'classification_data', x))
     return all_imgs_df, fold_indicies
 
 def split_data(all_imgs_df, fold_indicies, val_fold=3, test_fold=4):
