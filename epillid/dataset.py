@@ -83,13 +83,13 @@ class CustomBatchSamplerPillID(BatchSampler):
         self.batch_size = batch_size
         self.labelcol = labelcol
         self.min_per_class = min_per_class # drops any classes that don't have at least min_per_class instances
-        self.min_classes = min_classes # requires at least min_classes different classes in each minibatch (may repeat towards end if not enough classes remaining)
+        self.min_classes = min_classes # requires at least min_classes classes in each batch (may repeat towards end if not enough classes remaining)
         assert (self.min_classes * self.min_per_class) <= self.batch_size
         self.batch_size_mode = batch_size_mode
         '''
         max: batches will be at most self.batch_size, but may be smaller
         min: batches will be a minimum of self.batch_size, but may be larger
-        strict: batches will be exactly self.batch_size, but may break min_per_class
+        strict: batches will be exactly self.batch_size, but may break min_per_class condition
         None: will try to make batches of size self.batch_size but may be more or less as needed
         '''
         if generator:
@@ -98,78 +98,55 @@ class CustomBatchSamplerPillID(BatchSampler):
             self.rng = np.random.default_rng()
         assert batch_size_mode in ["max", "min", "strict", None]
 
-    # def batch_size_condition(self, curr_batch_size):
-    #     if self.batch_size_mode == "max":
-    #         return curr_batch_size + self.min_per_class
-
+    def verify_batchsize(self, curr_batch):
+        if self.batch_size_mode == "max":
+            return len(curr_batch) <= self.batch_size
+        elif self.batch_size_mode == "min":
+            return len(curr_batch) >= self.batch_size
+        elif self.batch_size_mode == "strict":
+            return len(curr_batch) == self.batch_size
+        else:
+            return True
 
     def __iter__(self):
         unused_indicies = {k: v.values for k,v in self.df.groupby(self.labelcol).groups.items() if len(v) >= self.min_per_class} #dropping any labels with less than self.min_per_class instances
-        valid_classes = set(list(unused_indicies.keys()))
-
+        valid_classes = list(unused_indicies.keys())
 
         while len(unused_indicies) > 0:
             curr_batch = []
-            curr_batch_labels = set()
+            curr_batch_labels = []
             leftovers = []
             size_diff = self.batch_size
             while size_diff >= self.min_per_class:
-                class_choices = list(set(unused_indicies.keys()) - curr_batch_labels) if len(curr_batch_labels) < self.min_classes else list(unused_indicies.keys())
+                class_choices = np.setdiff1d(list(unused_indicies.keys()), curr_batch_labels) if len(np.unique(curr_batch_labels)) < self.min_classes else list(unused_indicies.keys())
                 if len(class_choices) == 0:
-                    curr_label = self.rng.choice(valid_classes - curr_batch_labels)
+                    #if no classes left with unseen images, add classes that were already seen
+                    curr_label = self.rng.choice(np.setdiff1d(valid_classes,curr_batch_labels))
                     curr_batch.extend(self.df[self.df[self.labelcol] == curr_label].index.tolist())
-                    curr_batch_labels.add(curr_label)
+                    curr_batch_labels.append(curr_label)
                 else:
                     curr_label = self.rng.choice(class_choices)
                     indicies = self.rng.choice(unused_indicies[curr_label], self.min_per_class, replace=False)
-                    curr_batch_labels.add(curr_label)
-                    for i in indicies:
-                        curr_batch.append(i)
-                        unused_indicies[curr_label].remove(i)
+                    curr_batch_labels.append(curr_label)
+                    curr_batch.extend(indicies)
+                    unused_indicies[curr_label] = unused_indicies[curr_label][~np.isin(unused_indicies[curr_label], indicies)]
                     if len(unused_indicies[curr_label]) < self.min_per_class:
                         leftovers.extend(unused_indicies.pop(curr_label))
                 size_diff = self.batch_size - len(curr_batch)
 
+            assert len(curr_batch_labels) >= self.min_classes
             if self.batch_size_mode in [None, 'min']:
                 curr_batch.extend(leftovers)
             else:
                 curr_batch.extend(self.rng.choice(leftovers, min(len(leftovers), size_diff), replace=False))
             
             if (len(curr_batch) < self.batch_size) and self.batch_size_mode in ['min', 'strict']:
-                curr_label = self.rng.choice(valid_classes - curr_batch_labels)
+                curr_label = self.rng.choice(np.setdiff1d(valid_classes, curr_batch_labels))
                 curr_batch.extend(self.df[self.df[self.labelcol] == curr_label].index.tolist())
                 if self.batch_size_mode == 'strict':
                     curr_batch = curr_batch[:self.batch_size]
-
+            assert self.verify_batchsize(curr_batch)
             yield curr_batch
 
-
-class ConsRefPairSampler(BatchSampler):
-    def __init__(self, df, batch_size, labelcol="pilltype_id", generator=None, batch_size_mode="strict"):
-        self.ref_df = df[df.is_ref].copy().reset_index() # the dataset uses .iloc
-        self.cons_df = df[~df.is_ref].copy().reset_index() # the dataset uses .iloc
-        self.batch_size = batch_size
-        self.labelcol = labelcol
-        if generator:
-            self.rng = generator
-        else:
-            self.rng = np.random.default_rng()
-
-    def __iter__(self):
-        label_map = {k: v.values for k,v in self.df.groupby(self.labelcol).groups.items() if len(v) > 1} # dropping any labels with only 1 index per label
-        while len(label_map) > 0:
-            curr_batch = []
-            while self.batch_size > len(curr_batch):
-                curr_label = self.rng.choice(list(label_map.keys()))
-                indicies = label_map[curr_label]
-                if len(indicies) < 4: # if 3 or less labels, just add all of them and then remove from label map
-                    curr_batch.extend(indicies)
-                    label_map.pop(curr_label)
-                    if len(label_map) == 0:
-                        break
-                else:
-                    selected_indicies = self.rng.choice(indicies, 2, replace=False)
-                    curr_batch.extend(selected_indicies)
-                    label_map[curr_label] = indicies[~np.isin(indicies, selected_indicies)]
-            assert (len(curr_batch) > 0)
-            yield curr_batch
+    def __len__(self):
+        return int(self.df[self.labelcol].value_counts().where(lambda x: x > 1).sum())//self.batch_size
