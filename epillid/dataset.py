@@ -101,7 +101,7 @@ class CustomBatchSamplerPillID(BatchSampler):
         else:
             self.refs_per_class = 0
             self.refs = None
-
+        self.df = self.df[self.df[self.labelcol].isin(valid_classes)]
         assert min_classes <= len(valid_classes)
         assert (min_classes * min_per_class) <= batch_size
         assert len(self.df) >= batch_size
@@ -189,7 +189,7 @@ class CustomBatchSamplerPillID(BatchSampler):
             selected_inds = self.rng(inds, min(len(inds), size_diff), replace=False)
             if update_label_maps:
                 remaning = self.update_seen_unseen(seen, unseen, label, selected_inds)
-                if len(remaning) < min_per_class:
+                if len(remaining) < min_per_class and len(remaining) > 0:
                     leftovers[label] = remaning
             curr_batch.extend(selected_inds)
             size_diff = self.batch_size - len(curr_batch)
@@ -225,10 +225,10 @@ class CustomBatchSamplerPillID(BatchSampler):
                 inds.extend(self.rng.choice(unseen[label], min(len(unseen[label]), min_per_class), replace=False))
                 if update_label_maps:
                     remaining = self.update_seen_unseen(seen, unseen, label, inds)
-                    if len(remaining) < min_per_class:
+                    if len(remaining) < min_per_class and len(remaining) > 0:
                         leftovers[label] = remaining
             if len(inds) < min_per_class:
-                inds.extend(self.rng_choice(seen[label], min_per_class-len(inds), replace=False))
+                inds.extend(self.rng.choice(seen[label], min_per_class-len(inds), replace=False))
             curr_batch.extend(inds)
             batch_labels.extend(label)
 
@@ -266,9 +266,9 @@ class CustomBatchSamplerPillID(BatchSampler):
             while len(curr_batch) < self.batch_size and self.batch_size_mode in ['min', 'strict']:
                 self.grow_new_classes(curr_batch, curr_batch_labels, unseen, seen, add_from_seen=True, max_classes=1)
 
-            if len(curr_batch) > self.batch_size and  self.batch_size_mode in ['max', 'strict']
+            if len(curr_batch) > self.batch_size and  self.batch_size_mode in ['max', 'strict']:
                 curr_batch = curr_batch[:self.batch_size]
-                
+
             yield curr_batch
 
     def __len__(self):
