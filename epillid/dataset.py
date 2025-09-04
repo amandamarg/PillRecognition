@@ -101,7 +101,7 @@ class CustomBatchSamplerPillID(BatchSampler):
         else:
             self.refs_per_class = 0
             self.refs = None
-        self.df = self.df[self.df[self.labelcol].isin(valid_classes)]
+        self.valid_classes = valid_classes
         assert min_classes <= len(valid_classes)
         assert (min_classes * min_per_class) <= batch_size
         assert len(self.df) >= batch_size
@@ -186,11 +186,11 @@ class CustomBatchSamplerPillID(BatchSampler):
                 inds = np.setdiff1d(seen[label], curr_batch)
             else:
                 inds = unseen[label]
-            selected_inds = self.rng(inds, min(len(inds), size_diff), replace=False)
+            selected_inds = self.rng.choice(inds, min(len(inds), size_diff), replace=False)
             if update_label_maps:
-                remaning = self.update_seen_unseen(seen, unseen, label, selected_inds)
+                remaining = self.update_seen_unseen(seen, unseen, label, selected_inds)
                 if len(remaining) < min_per_class and len(remaining) > 0:
-                    leftovers[label] = remaning
+                    leftovers[label] = remaining
             curr_batch.extend(selected_inds)
             size_diff = self.batch_size - len(curr_batch)
             if size_diff <= 0:
@@ -230,7 +230,7 @@ class CustomBatchSamplerPillID(BatchSampler):
             if len(inds) < min_per_class:
                 inds.extend(self.rng.choice(seen[label], min_per_class-len(inds), replace=False))
             curr_batch.extend(inds)
-            batch_labels.extend(label)
+            batch_labels.append(label)
 
         if len(leftovers) > 0:
             self.cleanup_leftovers(leftovers, seen, unseen, curr_batch)       
@@ -240,9 +240,9 @@ class CustomBatchSamplerPillID(BatchSampler):
     def __iter__(self):
         #maybe just shuffle once at beginning instead of always using rng.choice
         if self.refs is None:
-            unseen = {k:v.values for k,v in self.df.groupby(self.labelcol).groups.items()}
+            unseen = {k:v.values for k,v in self.df.groupby(self.labelcol).groups.items() if k in self.valid_classes}
         else:
-            unseen = {k:v.values for k,v in self.df[~self.df.is_ref].groupby(self.labelcol).groups.items()}
+            unseen = {k:v.values for k,v in self.df[~self.df.is_ref].groupby(self.labelcol).groups.items() if k in self.valid_classes}
         seen = {}
 
         while len(unseen) > 0:
@@ -269,10 +269,19 @@ class CustomBatchSamplerPillID(BatchSampler):
             if len(curr_batch) > self.batch_size and  self.batch_size_mode in ['max', 'strict']:
                 curr_batch = curr_batch[:self.batch_size]
 
+            if self.debug:
+                assert self.verify_batchsize(curr_batch)
+                assert len(set(curr_batch_labels)) >= self.min_classes
+                val_counts = self.df.iloc[curr_batch][self.labelcol].value_counts()
+                if self.batch_size_mode == 'strict':
+                    assert val_counts[val_counts < self.min_per_class] <= 1
+                else:
+                    assert (val_counts >= self.min_per_class).all()
+
             yield curr_batch
 
     def __len__(self):
-        return len(self.df)//self.batch_size
+        return len(self.df[self.df[self.labelcol].isin(self.valid_classes)])//self.batch_size
     
     
 
