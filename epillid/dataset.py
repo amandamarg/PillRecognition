@@ -305,15 +305,69 @@ class RefConsBatchSampler(BatchSampler):
         if label not in seen.keys():
             seen[label] = []
         seen[label].extend(inds)
+        return unseen[label]
 
     
-    def select_inds(self, label, label_map, num_inds, add_ref=False):
+    def select_inds(self, label, label_map, num_inds, add_ref=False, exclude_inds=None):
         if label in label_map.keys():
             inds = np.intersect1d(self.refs[label], label_map[label]) if add_ref else np.setdiff1d(self.refs[label], label_map[label])
+            if exclude_inds is not None:
+                inds = np.setdiff1d(inds, exclude_inds)
             return self.rng.choice(inds, min(len(inds), num_inds), replace=False)
         return []
-        
     
+
+    def add_inds(self, dest, curr_batch, label, unseen, seen, num_inds, add_ref=False, seen_is_default=False, default_only=False, update_seen_unseen=True):
+        label_map = seen if seen_is_default else unseen
+        inds = self.select_inds(label, label_map, num_inds, add_ref, exclude_inds=curr_batch)
+        added_from_default = len(inds)
+        dest.extend(inds)
+        remaining = []
+        if update_seen_unseen and not seen_is_default:
+            remaining = self.update_seen_unseen(seen, unseen, label, inds)
+        if default_only or added_from_default == num_inds:
+            return remaining, added_from_default, total_added
+
+        
+        label_map = unseen if seen_is_default else seen
+        inds = self.select_inds(label, label_map, num_inds, add_ref, exclude_inds=curr_batch)
+        total_added = added_from_default + len(inds)
+        dest.extend(inds)
+        if update_seen_unseen and seen_is_default:
+            remaining = self.update_seen_unseen(seen, unseen, label, inds)
+        return remaining, added_from_default, total_added
+        
+            
+
+    def grow_existing_classes(self, curr_batch, batch_labels, unseen, seen, add_from_seen=False, add_refs=False, add_cons=True):
+        if not add_refs and not add_cons:
+            return
+        size_diff = self.batch_size - len(curr_batch)
+        if size_diff <= 0:
+            return
+        
+        if add_from_seen:
+            present_labels = np.intersect1d(list(seen.keys()), batch_labels)
+        else:
+            present_labels = np.intersect1d(list(unseen.keys()), batch_labels)
+
+        if len(present_labels) == 0:
+            return
+            
+        leftovers = {}
+        for label in present_labels:
+            selected_inds = self.select_inds(label, )
+            if not add_from_seen:
+                remaining = self.update_seen_unseen(seen, unseen, label, selected_inds)
+                if len(remaining) < self.min_per_class and len(remaining) > 0:
+                    leftovers[label] = remaining
+            curr_batch.extend(selected_inds)
+            size_diff = self.batch_size - len(curr_batch)
+            if size_diff <= 0:
+                break
+        if len(leftovers) > 0:
+            self.cleanup_leftovers(leftovers, seen, unseen, curr_batch)
+            
     def grow_new_classes(self, curr_batch, batch_labels, unseen, seen, seen_is_default=False, default_only=True, num_classes=None, update_seen_unseen=True):
         if num_classes is None:
             num_classes = (self.batch_size - len(curr_batch)) // self.min_per_class
@@ -339,20 +393,25 @@ class RefConsBatchSampler(BatchSampler):
             assert label not in batch_labels
             inds = []
 
-            unseen_ref_inds = self.select_inds(label, unseen, self.refs_per_class, True)
-            if len(unseen_ref_inds) < self.refs_per_class:
-                seen_ref_inds = self.select_inds(label, seen, self.refs_per_class - len(unseen_ref_inds), True)
 
-            unseen_cons_inds = self.select_inds(label, unseen, self.cons_per_class, False)
-            if len(unseen_cons_inds) < self.cons_per_class:
-                seen_cons_inds = self.select_inds(label, unseen, self.cons_per_class - len(unseen_cons_inds), False)
+
+            # unseen_ref_inds = self.select_inds(label, unseen, self.refs_per_class, True, exclude_inds=curr_batch)
+            # inds.extend(unseen_ref_inds)
+            
+            # unseen_cons_inds = self.select_inds(label, unseen, self.cons_per_class, False, exclude_inds=curr_batch)
+            # inds.extend(unseen_cons_inds)
+
+            # if update_seen_unseen:
+            #     remaining = self.update_seen_unseen(seen, unseen, label, inds)
+            #     if len(remaining) < self.min_per_class and len(remaining) > 0:
+            #         leftovers[label] = remaining
         
-            #TODO
-            if update_seen_unseen:
-                remaining = self.update_seen_unseen(seen, unseen, label, inds)
-                if len(remaining) < self.min_per_class and len(remaining) > 0:
-                    leftovers[label] = remaining
-        
+            # if len(unseen_ref_inds) < self.refs_per_class:
+            #     inds.extend(self.select_inds(label, seen, self.refs_per_class - len(unseen_ref_inds), True, exclude_inds=curr_batch))
+
+            # if len(unseen_cons_inds) < self.cons_per_class:
+            #     inds.extend(self.select_inds(label, unseen, self.cons_per_class - len(unseen_cons_inds), False, exclude_inds=curr_batch))
+
             assert len(inds) == self.min_per_class
             curr_batch.extend(inds)
             batch_labels.append(label)
