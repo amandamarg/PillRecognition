@@ -164,7 +164,7 @@ class CustomBatchSamplerPillID(BatchSampler):
                 curr_batch.extend(v)
                 self.update_seen_unseen(seen, unseen, k, v)
             elif size_diff > 0:
-                inds = self.rng.choice(v, size_diff, replace=False)
+                inds = self.select(size_diff, v)
                 curr_batch.extend(inds)
                 remaining = self.update_seen_unseen(seen, unseen, k, inds)
                 if len(remaining) > 0 and not self.keep_remainders:
@@ -240,7 +240,7 @@ class CustomBatchSamplerPillID(BatchSampler):
                 remaining = self.update_seen_unseen(seen, unseen, label, selected[0])
                 if len(remaining) < num_per_class and len(remaining) > 0:
                     leftovers[label] = remaining
-            selected = np.concatenate(selected)
+            selected = np.concatenate(selected).astype(int)
             assert len(selected) == num_per_class
             curr_batch.extend(selected)
             batch_labels.append(label)
@@ -297,18 +297,10 @@ if __name__ == "__main__":
     unique_classes = all_imgs_df['label'].unique()
     label_encoder = LabelEncoder()
     label_encoder.fit(unique_classes)
-    # ref_df = all_imgs_df[all_imgs_df.is_ref].reset_index(drop=True)
-
-    # pill_dataset = PillImages(all_imgs_df, 'train', labelcol='label', label_encoder=label_encoder)
-    # sampler = CustomBatchSamplerPillID(all_imgs_df, batch_size=128, labelcol='label', min_classes=2, min_per_class=2, keep_remainders=True, batch_size_mode='min', debug=False)
-    # dataloader = DataLoader(pill_dataset, batch_sampler=sampler)
-
-    # for i, (label, imgs, is_front, is_ref) in enumerate(tqdm(dataloader)):
-    #     continue
 
     sampler_args = []
     val_counts = all_imgs_df.value_counts('label')
-    test_add_refs = True
+    test_add_refs = False
 
     if test_add_refs:
         ref_labels = all_imgs_df[all_imgs_df.is_ref]['label'].unique()
@@ -326,16 +318,16 @@ if __name__ == "__main__":
             for batch_size in np.linspace(min_batch_size, max_batch_size, 3, dtype=int):
                 sampler_args.append((min_per_class, min_classes, batch_size))
 
-
     for mode in ['min', 'max', 'strict', None]:
         print("{}:".format(mode if mode is not None else 'None'))
         for min_per_class, min_classes, batch_size in sampler_args:
             print("min_per_class={}, min_classes={}, batch_size:{}".format(min_per_class, min_classes, batch_size))
             sampler = CustomBatchSamplerPillID(all_imgs_df, batch_size=batch_size, labelcol='label', min_classes=min_classes, add_refs=test_add_refs, min_per_class=min_per_class, keep_remainders=True, batch_size_mode=mode, debug=True)
             print("keep_remainders=True")
-            for _ in tqdm(sampler, total=len(sampler)):
+            for x in tqdm(sampler, total=len(sampler)):
                 continue
             sampler = CustomBatchSamplerPillID(all_imgs_df, batch_size=batch_size, labelcol='label', min_classes=min_classes,add_refs=test_add_refs, min_per_class=min_per_class, keep_remainders=False, batch_size_mode=mode, debug=True)
             print("keep_remainders=False")
             for _ in tqdm(sampler, total=len(sampler)):
                 continue
+            
