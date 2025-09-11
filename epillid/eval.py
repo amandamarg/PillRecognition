@@ -142,3 +142,74 @@ def eval_logits(labels, logits):
     assert labels.device.type=='cpu' and logits.device.type=='cpu'
     all_labels = np.arange(start=0,stop=logits.shape[1])
     return {'top_1_accuracy': top_k_accuracy_score(labels, logits, k=1, labels=all_labels), 'top_5_accuracy':top_k_accuracy_score(labels, logits, k=5, labels=all_labels), 'MRR': MRR(labels, logits)}
+
+import torch.nn.functional as F
+from sklearn.metrics import label_ranking_average_precision_score
+
+def get_similarity_scores(embeddings, labels):
+    n = embeddings.shape[0]
+    inds = torch.arange(n).to(embeddings.device)
+    i,j = torch.meshgrid(inds, inds)
+    all_pairs = torch.column_stack((i.reshape(-1), j.reshape(-1)))
+    all_pairs = all_pairs[all_pairs[:,0] != all_pairs[:,1]]
+    scores = F.cosine_similarity(embeddings[all_pairs[:,0]], embeddings[all_pairs[:,1]]).reshape(n,n-1)
+    shifted_labels = labels[torch.where(i<=j, j+1, j)[:,0:-1]]
+    true_label_matrix = (shifted_labels == labels[i[:,0:-1]])
+    return scores, true_label_matrix
+
+def get_similarity_scores_x_y(x_embeddings, x_labels, y_embeddings, y_labels):
+    n, m = x_embeddings.shape[0], y_embeddings.shape[0]
+    x_inds = torch.arange(n).to(x_embeddings.device)
+    y_inds = torch.arange(m).to(y_embeddings.device)
+    i,j = torch.meshgrid(x_inds, y_inds)
+    all_pairs = torch.column_stack((i.reshape(-1), j.reshape(-1)))
+    scores = F.cosine_similarity(x_embeddings[all_pairs[:,0]], y_embeddings[all_pairs[:,1]]).reshape(n,m)
+    true_label_matrix = (x_labels.reshape(-1,1) == y_labels)
+    return scores, true_label_matrix
+
+def eval_metrics(inputs, n_classes):
+    embeddings = inputs['embeddings']
+    logits = inputs['logits']
+    labels = inputs['labels']
+    is_front = inputs.get('is_front', None)
+    is_ref = inputs.get('is_ref', None)
+
+    unique_classes = np.arange(n_classes)
+    top_1_acc = top_k_accuracy_score(labels, logits, k=1, labels=unique_classes)
+    top_5_acc = top_k_accuracy_score(labels, logits, k=5, labels=unique_classes)
+
+    if is_ref is not None:
+        ref_embeddings = embeddings[is_ref]
+        cons_embeddings = embeddings[~is_ref]
+        ref_labels = labels[is_ref]
+        cons_labels = labels[~is_ref]
+        scores, true_label_matrix = get_similarity_scores_x_y(cons_embeddings, cons_labels, ref_embeddings, ref_labels)        
+    else:
+        scores, true_label_matrix = get_similarity_scores(embeddings, labels)
+
+    lraps = label_ranking_average_precision_score(y_true=true_label_matrix, y_score=scores)
+
+    metric_vals = {'top_1_acc': top_1_acc, 'top_5_acc': top_5_acc, "LRAPS": lraps}
+    return metric_vals
+class MetricTracker:
+    def __init__(self):
+        self.history = {}
+        self.curr_metrics = {}
+
+    def update_curr_metrics(self, inputs):
+        for k,v in inputs.items():
+            if k not in self.curr_metrics.keys():
+                self.curr_metrics[k] = torch.tensor([v])
+            else:
+                self.curr_metrics[k] = torch.concat((self.curr_metrics[k], torch.tensor([v])))
+    
+    def update_history(self):
+        outputs = {}
+        for k,v in self.curr_metrics.items():
+            outputs[k] = torch.mean(v)
+            if k not in self.history.keys():
+                self.history[k] = outputs[k].ravel()
+            else:
+                self.history[k] = torch.concat((self.history[k], outputs[k].ravel()))
+            self.curr_metrics[k] = torch.tensor([])
+        return outputs

@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from pytorch_metric_learning import losses
+from pytorch_metric_learning import losses, miners
 import numpy as np
 
 class ModelLoss(nn.Module):
@@ -42,15 +42,91 @@ class ModelLoss(nn.Module):
         
         losses['total'] = weighted_loss
         return losses
-class TripletLoss(nn.Module):
-    def __init__(self, miner, triplet_loss):
-        super(TripletLoss, self).__init__()
-        self.miner = miner
-        self.triplet_loss = triplet_loss
+# class TripletLoss(nn.Module):
+#     def __init__(self, miner, triplet_loss):
+#         super(TripletLoss, self).__init__()
+#         self.miner = miner
+#         self.triplet_loss = triplet_loss
 
-    def forward(self, embeddings, labels):
-        triplets = self.miner(embeddings, labels)
-        return self.triplet_loss(embeddings, labels, triplets)
+#     def forward(self, embeddings, labels):
+#         triplets = self.miner(embeddings, labels)
+#         return self.triplet_loss(embeddings, labels, triplets)
+from triplets import get_hardest_triplets, get_triplets, triplet_selector
+import torch.nn.functional as F
+class TripletLoss(nn.Module):
+    def __init__(self, margin=0.2, mode='all', use_cosine_dist=False):
+        super(TripletLoss, self).__init__()
+        self.margin=margin
+        self.mode=mode
+        self.use_cosine_dist=use_cosine_dist
+
+    def get_triplets(self, embeddings, labels, is_front=None, is_ref=None):
+        # if self.mode == 'hardest':
+        #     triplets, pos_dist, neg_dist = get_hardest_triplets(embeddings, labels, is_front, is_ref, self.use_cosine_dist)
+        #     return triplets, pos_dist, neg_dist
+        triplets = get_triplets(labels, is_front, is_ref)
+        triplets, pos_dist, neg_dist = triplet_selector(embeddings, triplets, self.margin, self.mode, self.use_cosine_dist)
+        return triplets, pos_dist, neg_dist
+
+    def forward(self, inputs):
+        embeddings = inputs['embeddings']
+        labels = inputs['labels']
+        is_front = inputs.get('is_front', None)
+        is_ref = inputs.get('is_ref', None)
+        triplets, pos_dists, neg_dists = self.get_triplets(embeddings, labels, is_front, is_ref)
+        return F.relu(pos_dists-neg_dists+self.margin).mean()
+
+
+class LossWrapper(nn.Module):
+    def __init__(self, loss_types, loss_weights, device):
+        super(LossWrapper, self).__init__()
+        self.loss_types = loss_types
+        self.loss_weights = loss_weights
+        self.device = device
+
+    def forward(self, inputs):
+        losses = {}
+        weighted_loss = torch.Tensor([0.0]).to(self.device)
+        
+        for loss_name,loss_func in self.loss_types.items():
+            losses[loss_name] = loss_func(inputs)
+            weighted_loss += (self.loss_weights[loss_name] * losses[loss_name])
+        
+        losses['total'] = weighted_loss
+        return losses
+# class LossTracker:
+#     def __init__(self):
+#         self.loss_history = {}
+#         self.curr_loss = {}
+
+#     def best_loss(self):
+#         best_epoch = {}
+#         best_val = {}
+#         for k,v in self.loss_history.items():
+#             if len(v) > 0:
+#                 best_epoch[k] = np.argmin(v)
+#                 best_val[k] = np.min(v)
+#             else:
+#                 best_epoch[k] = None
+#                 best_val[k] = None
+#         return best_epoch, best_val
+    
+#     def update_curr_loss(self, loss_type, loss_val):
+#         if loss_type in self.loss_history.keys():
+#             self.curr_loss[loss_type].append(loss_val.item())
+#         else:
+#             self.curr_loss[loss_type] = [loss_val.item()]
+
+#     def update_loss_history(self):
+#         outputs = {}
+#         for k,v in self.curr_loss.items():
+#             outputs[k] = np.sum(v)/len(v)
+#             if k not in self.loss_history.keys():
+#                 self.loss_history[k] = [outputs[k]]
+#             else:
+#                 self.loss_history[k].append(outputs[k])
+#             self.curr_loss[k] = []
+#         return outputs
 
 class LossTracker:
     def __init__(self):
@@ -62,28 +138,29 @@ class LossTracker:
         best_val = {}
         for k,v in self.loss_history.items():
             if len(v) > 0:
-                best_epoch[k] = np.argmin(v)
-                best_val[k] = np.min(v)
+                best_epoch[k] = torch.argmin(v)
+                best_val[k] = torch.min(v)
             else:
                 best_epoch[k] = None
                 best_val[k] = None
         return best_epoch, best_val
     
-    def update_curr_loss(self, loss_type, loss_val):
-        if loss_type in self.loss_history.keys():
-            self.curr_loss[loss_type].append(loss_val.item())
-        else:
-            self.curr_loss[loss_type] = [loss_val.item()]
+    def update_curr_loss(self, loss):
+        for k,v in loss.items():
+            if k in self.curr_loss.keys():
+                self.curr_loss[k] = torch.concat((self.curr_loss[k], v.detach().cpu().ravel()))
+            else:
+                self.curr_loss[k] = v.detach().cpu().ravel()
 
     def update_loss_history(self):
         outputs = {}
         for k,v in self.curr_loss.items():
-            outputs[k] = np.sum(v)/len(v)
+            outputs[k] = torch.mean(v)
             if k not in self.loss_history.keys():
-                self.loss_history[k] = [outputs[k]]
+                self.loss_history[k] = outputs[k].ravel()
             else:
-                self.loss_history[k].append(outputs[k])
-            self.curr_loss[k] = []
+                self.loss_history[k] = torch.concat((self.loss_history[k], outputs[k].ravel()))
+            self.curr_loss[k] = torch.tensor([])
         return outputs
 
 if __name__ == "__main__":
