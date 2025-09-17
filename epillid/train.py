@@ -134,7 +134,7 @@ from loss import LossTracker
 from eval import MetricTracker
 from sklearn.metrics import top_k_accuracy_score
 class Trainer:
-    def __init__(self, n_classes, device, model, dataloaders, clip_gradients, optimizer, lr_scheduler, criterion, writer, path="./"):
+    def __init__(self, n_classes, device, model, dataloaders, clip_gradients, optimizer, lr_scheduler, criterion, writer, use_ref_labels=True, use_side_labels=True, path="./"):
         self.n_classes = n_classes
         self.device = device
         self.class_inds = torch.arange(n_classes)
@@ -147,6 +147,8 @@ class Trainer:
         self.loss_trackers = {'train': LossTracker(), 'val': LossTracker()}
         self.metric_trackers = {'train': MetricTracker(), 'val': MetricTracker()}
         self.writer = writer
+        self.use_ref_labels = use_ref_labels
+        self.use_side_labels = use_side_labels
         self.path = path
         os.makedirs(os.path.join(self.path, "checkpoints"), exist_ok=True)
 
@@ -158,14 +160,14 @@ class Trainer:
     def train_loop(self):
         self.model.train()
         for data in tqdm(self.dataloaders["train"], total=len(self.dataloaders["train"])):
-            labels = data[0].to(self.device)
+            labels = data[0].to(self.device).long()
             imgs = data[1].to(self.device)
-            is_front = data[2].to(self.device)
-            is_ref = data[3].to(self.device)
+            is_front = data[2].to(self.device) if self.use_side_labels else None
+            is_ref = data[3].to(self.device) if self.use_ref_labels else None
             self.optimizer.zero_grad()
             with torch.set_grad_enabled(True):
                 embeddings, logits = self.model(imgs)
-                loss = self.criterion({"embeddings": embeddings, "logits": logits, "labels":labels.long(), "is_front": is_front, "is_ref": is_ref})
+                loss = self.criterion({"embeddings": embeddings, "logits": logits, "labels":labels, "is_front": is_front, "is_ref": is_ref})
                 loss["total"].backward()
                 if self.clip_gradients:
                     nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
@@ -176,13 +178,13 @@ class Trainer:
     def val_loop(self):
         self.model.eval()
         for data in tqdm(self.dataloaders["val"], total=len(self.dataloaders["val"])):
-            labels = data[0].to(self.device)
+            labels = data[0].to(self.device).long()
             imgs = data[1].to(self.device)
-            is_front = data[2].to(self.device)
-            is_ref = data[3].to(self.device)
+            is_front = data[2].to(self.device) if self.use_side_labels else None
+            is_ref = data[3].to(self.device) if self.use_ref_labels else None
             with torch.set_grad_enabled(False):
                 embeddings, logits = self.model(imgs)
-                loss = self.criterion({"embeddings": embeddings, "logits": logits, "labels":labels.long(), "is_front": is_front, "is_ref": is_ref})
+                loss = self.criterion({"embeddings": embeddings, "logits": logits, "labels":labels, "is_front": is_front, "is_ref": is_ref})
             self.loss_trackers['val'].update_curr_loss(loss)
             self.metric_trackers['val'].update_curr_metrics(self.eval(labels, logits))
 
@@ -259,7 +261,7 @@ if __name__ == "__main__":
     writer = SummaryWriter("./training_logs")
     model = ModelWrapper(len(unique_classes), embedding_model)
     triplet_loss = TripletLoss(mode='hard')
-    criterion = LossWrapper({'triplet':triplet_loss}, {'triplet': 1.0}, device=device)
+    criterion = LossWrapper({'triplet': triplet_loss}, {'triplet': 1.0}, device=device)
     opt = optim.Adam(model.parameters(), lr=1e-4)
     lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1, patience=5)
     trainer = Trainer(n_classes=n_classes, device=device, model=model, dataloaders=dataloaders, clip_gradients=True, optimizer=opt, lr_scheduler=lr_scheduler, criterion=criterion, writer=writer, path="./")
