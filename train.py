@@ -20,7 +20,7 @@ from benchmark.metric_utils import HardNegativePairSelector, RandomNegativeTripl
 from metrics import topk_acc
 
 class Trainer:
-    def __init__(self, device, model, dataloaders, clip_gradients, optimizer, lr_scheduler, criterion, writer, eval_update_type="logit", metric_type="euclidean", simulate_pairs=False, shift_labels=False, plot_metrics_names=["acc_1", "acc_5", "loss", "micro_ap", "map", "mrr"], path="./"):
+    def __init__(self, device, model, dataloaders, clip_gradients, optimizer, lr_scheduler, criterion, writer, eval_update_type="logit", metric_type="euclidean", simulate_pairs=False, shift_labels=False, train_with_ref_labels=False, plot_metrics_names=["acc_1", "acc_5", "loss", "micro_ap", "map", "mrr"], path="./"):
         self.device = device
         self.model = model.to(device)
         self.n_classes = self.model.get_original_n_classes()
@@ -37,6 +37,7 @@ class Trainer:
         self.simulate_pairs = simulate_pairs
         self.logits_evaluator = LogitsEvaluator(self.n_classes, side_aggr_mode="max", pair_aggr_mode="max", simulate_pairs=simulate_pairs, shift_labels=self.shift_labels)
         self.embedding_evaluator = EmbeddingEvaluator(self.n_classes, ref_aggr_mode="max", pair_aggr_mode="max", score_type=metric_type, simulate_pairs=simulate_pairs, shift_labels=self.shift_labels)
+        self.train_with_ref_labels = train_with_ref_labels
         self.plot_metrics_names = plot_metrics_names
         self.path = path
         self.best_model_path = None
@@ -72,8 +73,8 @@ class Trainer:
         for data in tqdm(self.dataloaders["train"], total=len(self.dataloaders["train"])):
             labels = data["label"].to(self.device).long()
             imgs = data["img"].to(self.device)
-            is_front = data["is_front"].to(self.device).bool()
-            is_ref = data["is_ref"].to(self.device).bool()
+            is_front = data["is_front"].to(self.device).bool() if self.model.train_with_side_labels else None
+            is_ref = data["is_ref"].to(self.device).bool() if self.train_with_ref_labels else None
             self.optimizer.zero_grad()
             with torch.set_grad_enabled(True):
                 model_outputs = self.model(imgs, labels)
@@ -93,8 +94,8 @@ class Trainer:
         for data in tqdm(self.dataloaders["val"], total=len(self.dataloaders["val"])):
             labels = data["label"].to(self.device).long()
             imgs = data["img"].to(self.device)
-            is_front = data["is_front"].to(self.device).bool()
-            is_ref = data["is_ref"].to(self.device).bool()
+            is_front = data["is_front"].to(self.device).bool() if self.model.train_with_side_labels else None
+            is_ref = data["is_ref"].to(self.device).bool() if self.train_with_ref_labels else None
             with torch.set_grad_enabled(False):
                 model_outputs = self.model(imgs, labels)
                 if self.shift_labels:
@@ -125,7 +126,10 @@ class Trainer:
             outputs[k] = torch.cat(v, 0)
 
         print("Starting logit eval...")
-        logit_eval = self.logits_evaluator.eval(outputs["logits"], outputs["labels"], outputs["is_front"], outputs["is_ref"])
+        if self.train_with_ref_labels:
+            logit_eval = self.logits_evaluator.eval(outputs["logits"], outputs["labels"], outputs["is_front"], outputs["is_ref"])
+        else:
+            logit_eval = self.logits_evaluator.eval(outputs["logits"], outputs["labels"], outputs["is_front"], None)
         print("Starting emb eval...")
         emb_eval = self.embedding_evaluator.eval(outputs["emb"], outputs["labels"], outputs["is_front"], outputs["is_ref"])
         for k,v in logit_eval.items():
@@ -145,6 +149,7 @@ class Trainer:
         torch.save(self.model, checkpoint_path)
         self.writer.flush()
         best_value, best_checkpoint_index = self.epoch_metrics[self.eval_update_type + '_eval']['micro_ap'].best(mode='max')
+        #early stopping implementation from https://github.com/usuyama/ePillID-benchmark
         if best_checkpoint_index + 1 == len(self.epoch_metrics[self.eval_update_type + '_eval']['micro_ap'].history):
             has_waited = 1 if earlystop_patience is not None else 0
             print(f"Best checkpoint: {best_checkpoint_index}, Best value: {best_value}")
@@ -180,8 +185,9 @@ class Trainer:
                 print(f"Best Checkpoint index: {best_checkpoint_index}")
             if stop_training:
                 break
-        if ((i-1)%checkpoint != 0) and not stop_training:
-            self.eval(i-1)
-            self.save_checkpoint(i-1)
+        print(f"Trainning stopped at epoch {i}")
+        if (i%checkpoint != 0) and not stop_training:
+            self.eval(i)
+            self.save_checkpoint(i)
         self.writer.close()
         return self.best_model_path

@@ -6,7 +6,7 @@ from sklearn.metrics import average_precision_score
 import torch.functional as F
 
 '''
-Based on code from https://github.com/usuyama/ePillID-benchmark
+Based on https://github.com/usuyama/ePillID-benchmark
 '''
 
 def create_same_side_pairs(labels, is_front, is_ref=None):

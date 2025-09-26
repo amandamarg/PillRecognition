@@ -31,7 +31,7 @@ class PillImages(Dataset):
         label = row[self.labelcol]
         if self.label_encoder is not None:
             label = self.label_encoder.transform([label])[0]
-        return {"label": label, "img": img, "is_front": int(row.is_front), "is_ref": int(row.is_ref), "index": index}
+        return {"label": label, "img": img, "is_front": int(row.is_front), "is_ref": int(row.is_ref)}
     
     def load_img(self, img_path):
         if not os.path.exists(img_path):
@@ -261,6 +261,7 @@ class CustomBatchSamplerPillID(BatchSampler):
             curr_batch = []
             curr_batch_labels = []
             self.grow_new_classes(curr_batch, curr_batch_labels, unseen, seen, seen_is_default=False, default_only=False, num_classes=self.min_classes) # make sure we reach minimum number of classes by first adding from unseen, and then from seen only if needed
+            # self.grow_existing_classes(curr_batch, curr_batch_labels, unseen, seen, add_from_seen=False)
             self.grow_new_classes(curr_batch, curr_batch_labels, unseen, seen, seen_is_default=False, default_only=True) # add as many unseen classes as we can without going over batch size
             self.grow_existing_classes(curr_batch, curr_batch_labels, unseen, seen, add_from_seen=False)
 
@@ -289,43 +290,3 @@ class CustomBatchSamplerPillID(BatchSampler):
 
     def __len__(self):
         return len(self.df[self.df[self.labelcol].isin(self.valid_classes)])//self.batch_size
-
-# if __name__ == "__main__":
-#     all_imgs_df, fold_indicies = utils.load_data()
-#     unique_classes = all_imgs_df['label'].unique()
-#     label_encoder = LabelEncoder()
-#     label_encoder.fit(unique_classes)
-
-#     sampler_args = []
-#     val_counts = all_imgs_df.value_counts('label')
-#     test_add_refs = False
-
-#     if test_add_refs:
-#         ref_labels = all_imgs_df[all_imgs_df.is_ref]['label'].unique()
-#         val_counts = val_counts[ref_labels]
-#         min_per_class_range = np.linspace(3, val_counts.max(), 2, dtype=int)
-#     else:
-#         min_per_class_range = np.linspace(2, all_imgs_df['label'].value_counts().max(), 2, dtype=int)
-
-#     for min_per_class in min_per_class_range:
-#         val_counts_filtered = val_counts[val_counts >= min_per_class]
-#         max_classes = len(val_counts_filtered)
-#         max_batch_size = all_imgs_df['label'].isin(val_counts_filtered.index.tolist()).sum()
-#         for min_classes in np.linspace(2, max_classes, 2, dtype=int):
-#             min_batch_size = min_classes*min_per_class                
-#             for batch_size in np.linspace(min_batch_size, max_batch_size, 3, dtype=int):
-#                 sampler_args.append((min_per_class, min_classes, batch_size))
-
-#     for mode in ['min', 'max', 'strict', None]:
-#         print("{}:".format(mode if mode is not None else 'None'))
-#         for min_per_class, min_classes, batch_size in sampler_args:
-#             print("min_per_class={}, min_classes={}, batch_size:{}".format(min_per_class, min_classes, batch_size))
-#             sampler = CustomBatchSamplerPillID(all_imgs_df, batch_size=batch_size, labelcol='label', min_classes=min_classes, add_refs=test_add_refs, min_per_class=min_per_class, keep_remainders=True, batch_size_mode=mode, debug=True)
-#             print("keep_remainders=True")
-#             for x in tqdm(sampler, total=len(sampler)):
-#                 continue
-#             sampler = CustomBatchSamplerPillID(all_imgs_df, batch_size=batch_size, labelcol='label', min_classes=min_classes,add_refs=test_add_refs, min_per_class=min_per_class, keep_remainders=False, batch_size_mode=mode, debug=True)
-#             print("keep_remainders=False")
-#             for _ in tqdm(sampler, total=len(sampler)):
-#                 continue
-    
