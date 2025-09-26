@@ -1,426 +1,46 @@
-import pandas as pd
-import cv2
-import json
-from jsonschema import validate
-import ultralytics
-from torch.utils.data import Dataset
-from PIL import Image
-import numpy as np 
-from sklearn.preprocessing import LabelEncoder
+from dataset import TwoSidedPillImages, PillImages
 from glob import glob
+import pandas as pd
 import os
-import torch
-import tqdm
+import numpy as np
 
-def readLabelsObjDetect(path):
-    with open(path, 'r') as f:
-        labels = list(map(lambda x: x.rstrip().split(' '),f.readlines()))
-    f.close()
-    labels = pd.DataFrame(labels, columns=['class', 'x', 'y', 'w', 'h'])
-    labels = labels.apply(lambda x: x.astype(pd.Int64Dtype()) if x.name == 'class' else x.astype(pd.Float64Dtype()))
-    return labels
-
-def drawBoundingBoxes(img, labels):
-    img_with_boxes = img.copy()
-    height, width, __ = img.shape
-    for __,row in labels.iterrows():
-        __,x,y,w,h = row.values
-        x1 = int((x - w / 2) * width)
-        y1 = int((y - h / 2) * height)
-        x2 = x1 + int(w * width)
-        y2 = y1 + int(h * height)
-        #draws a green rectangle of thickness 5 on (copy of) img
-        cv2.rectangle(img_with_boxes, (x1, y1), (x2, y2), (0, 255, 0), 5)
-    '''
-    x1 = labels['x'].sub(labels['w']).mul(width).astype(pd.Int64Dtype())
-    y1 = labels['y'].sub(labels['h']).mul(height).astype(pd.Int64Dtype())
-    x2 = x1.add(labels['w'].mul(width).astype(pd.Int64Dtype()))
-    y2 = y1.add(labels['h'].mul(height).astype(pd.Int64Dtype()))
-    for i in range(0,labels.shape[1]):
-        cv2.rectangle(img_with_boxes, (x1[i], y1[i]), (x2[i], y2[i]), (0, 255, 0), 5)
-    '''
-    return img_with_boxes
-
-
-'''
-adds dataset info to datasets.json
-'''
-def addToDatasets(label_type, dataset_name, root_path, yaml_path):
-    with open('./datasets.json', 'r') as file:
-        data = json.loads(file.read())
-    file.close()
-
-    data[dataset_name] = {'root_path': root_path, 'yaml_path': yaml_path, 'label_type': label_type}
-
-    with open('./datasets.json', 'w') as file:
-        json.dump(data, file)
-    file.close()    
-
-
-'''
-logs content into file at log_file_path
-if overwrite is Ture, overwrites file if it exists, otherwise just appends 
-'''
-def log(log_file_path, content, overwrite=False):
-    mode = 'w' if overwrite else 'a'
-    with open(log_file_path, mode) as log_file:
-        log_file.write(content + '\n')
-    log_file.close()
-
-
-'''
-checks if labels in file at file_path match labels in class_labels and returns result
-    ** assumes each line in file corresponds to label for a seperate instance of a class
-    ** labels are formatted with the class label first and the segmentation label second, seperated by a single space
-
-file_path: path to file containing labels
-class_labels: correct class label(s) to check against
-    * if class_labels is a list, must contain exactly one label for each line in file 
-    * if class_labels is not a list, then file must only contain one label
-fix: if True and labels in file don't match labels in class_labels, overwrites file with correct class_labels
-log_change: if True then function will log any changes made to log_file_path. default True.
-log_file_path: path to file where changes will be logged if log_change is True. Ignored if log_change is False. default './log_changes.txt'. 
-'''
-def labels_match(file_path, class_labels, fix=True, log_change=True, log_file_path='./log_changes.txt'):
-    with open(file_path, 'r') as file:
-        if isinstance(class_labels, list):
-            orig_content = file.readlines()
-            data = list(zip(class_labels, orig_content))
-            updated_content = list(map(lambda x: str(x[0]) + ' ' + (' ').join(x[1].split(' ')[1:]), data)) 
-            orig_content = ('').join(orig_content)
-            updated_content = ('').join(updated_content)
-        else:
-            orig_content = file.read()
-            data = orig_content.split(' ')
-            updated_content = str(class_labels) + ' ' + (' ').join(data[1:])
-
-    file.close()
-    if orig_content == updated_content:
-        return True
-    elif fix:
-        with open(file_path, 'w') as file:
-            file.write(updated_content)
-        file.close()
-        if log_change:
-            log_data = (',').join([file_path, orig_content, updated_content])
-            log(log_file_path, log_data)
-    return False
-
-'''
-validates a json object against a schema
-
-instance is either an instance of a json object or a path to a json file
-    * if instance is a file_path, then will return contents of file as json object
-schema_file_path is a path to a json schema
-'''
-def validateJSON(instance, schema_file_path):
-    with open(schema_file_path, 'r') as file:
-        schema = json.load(file)
-    file.close()
-    if isinstance(instance, str):
-        with open(instance, 'r') as file:
-            json_obj = json.load(file)
-        file.close()
-        validate(instance=json_obj, schema=schema)
-        return json_obj
-    else:
-        validate(instance=instance, schema=schema)
-
-
-def zeroPadFront(x, desiredLength):
-    x = str(x)
-    while len(x) < desiredLength:
-        x = '0' + x
-    return x
-
-def get_terminology(list_name):
-    return pd.read_xml("./terminology_lists/" + list_name, iterparse={"choice": ["label", "value"]}, names=["name", "code"])
-
-def getNormalizeTransform(x):
-    images = np.stack(x.map(Image.open))
-    mean = np.mean(images, axis=(0,1,2))
-    std = np.std(images, axis=(0,1,2))
-    return transforms.Normalize(mean, std)
-    
-
- 
-class PillDataset(Dataset):
-    def __init__(self, image_paths, labels, transform=None, target_transform=None):
-        self.img_paths = image_paths
-        self.labels = labels
-        self.transform = transform
-        self.target_transform = target_transform
-
-    def __len__(self):
-        return len(self.labels)
-
-    def __getitem__(self, idx):
-        image_path = (self.img_paths.iloc[idx])
-        image = Image.open(image_path)
-        label = self.labels.iloc[idx]
-        if self.transform:
-            image = self.transform(image)
-        if self.target_transform:
-            label = self.target_transform(label)
-        return image, label
-    
-def load_epillid(data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata', path_to_folds = 'folds/pilltypeid_nih_sidelbls0.01_metric_5folds/base', train_with_side_labels = True, encode_labels=True):
-    data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata'
-    csv_files = glob(os.path.join(data_root_dir, path_to_folds, '*.csv'))
-
+def load_data(data_root_dir = '/Users/Amanda/Desktop/ePillID-benchmark/mydata', img_dir='classification_data'):
+    csv_files = glob(data_root_dir + '/folds/**/*.csv', recursive=True)
     all_imgs_csv = [x for x in csv_files if x.endswith("all.csv")][0]
-    csv_files = sorted([x for x in csv_files if not x.endswith("all.csv")])
-    test_imgs_csv = csv_files.pop(-1)
-    val_imgs_csv = csv_files.pop(-1)
+    folds = sorted([x for x in csv_files if not x.endswith("all.csv")])
+    all_imgs_df = pd.read_csv(all_imgs_csv)
+    fold_indicies = [np.where(all_imgs_df.image_path.isin(pd.read_csv(fold).image_path))[0] for fold in folds]
+    all_imgs_df['image_path'] = all_imgs_df['image_path'].apply(lambda x: os.path.join(data_root_dir, 'classification_data', x))
+    return all_imgs_df, fold_indicies
 
-    all_images_df = pd.read_csv(all_imgs_csv)
-    val_df = pd.read_csv(val_imgs_csv)
-    test_df = pd.read_csv(test_imgs_csv)
+def split_data(all_imgs_df, fold_indicies, val_fold=3, test_fold=4):
+    val_df = all_imgs_df.iloc[fold_indicies[val_fold]].reset_index(drop=True)
+    test_df = all_imgs_df.iloc[fold_indicies[test_fold]].reset_index(drop=True)
+    train_df = all_imgs_df.iloc[np.concatenate([f for i,f in enumerate(fold_indicies) if i != val_fold and i != test_fold])].reset_index(drop=True)
+    return {'train': train_df,'val': val_df, 'test': test_df}
 
-    img_dir = 'classification_data'
-    for df in [all_images_df, val_df, test_df]:
-        df['image_path'] = df['image_path'].apply(lambda x: os.path.join(data_root_dir, img_dir, x))
+def front_back_pairs(df, labelcol):
+    pairs = []
+    for group_label,group in df.groupby(labelcol):
+        front = group[group.is_front]
+        back = group[~group.is_front]
+        k = min(len(front), len(back))
+        if k > 0:
+            pairs.extend(list(zip(front.iloc[:k].index.to_numpy(), back.iloc[:k].index.to_numpy())))
+    return np.array(pairs)
 
-    if train_with_side_labels:
-        all_images_df['label'] = all_images_df.apply(lambda x: x['label'] + '_' + ('0' if x.is_front else '1'), axis=1)
-        val_df['label'] = val_df.apply(lambda x: x['label'] + '_' + ('0' if x.is_front else '1'), axis=1)
-        test_df['label'] = test_df.apply(lambda x: x['label'] + '_' + ('0' if x.is_front else '1'), axis=1)
-
-    if encode_labels:
-        label_encoder = LabelEncoder().fit(all_images_df.label)
-        all_images_df['encoded_label'] = label_encoder.transform(all_images_df.label)
-        val_df['encoded_label'] = label_encoder.transform(val_df.label)
-        test_df['encoded_label'] = label_encoder.transform(test_df.label)
-
-    val_test_image_paths = list(val_df['image_path'].values) + list(test_df['image_path'].values)
-    train_df = all_images_df[~all_images_df['image_path'].isin(val_test_image_paths)]
-
-    return {'train': train_df, 'val': val_df, 'test': test_df}
-
-
-from itertools import combinations
-
-def generate_positive_pairs(df, labelcol="pilltype_id", enforce_ref_cons=True, enforce_same_side=True, side=None):
-    '''
-    enforce_ref_cons=True will return only pairs with exactly one reference image and one consumer image
-    enforce_same_side=True will return only pairs where both images in the pair are the same side
-    side can be one of ['front', 'back', None], and if not None, will return just the pairs corresponding to the side that is passed.
-    Note: if side is not None, will override enforce_same_side and return only same-sided pairs for that side.
-    '''
-
-    df_copy = df.copy().reset_index()
-    indicies = df_copy.index.values
-    pairs = np.array(list(combinations(indicies, 2)))
-    pairs = pairs[np.equal(df_copy.iloc[pairs[:,0]][labelcol].to_numpy(), df_copy.iloc[pairs[:,1]][labelcol].to_numpy())]
-
-    assert side in ['front', 'back', None]
-
-    if side == 'front':
-        pairs = pairs[np.logical_and(df_copy.iloc[pairs[:,0]].is_front.to_numpy(), df_copy.iloc[pairs[:,1]].is_front.to_numpy())]
-    elif side == 'back':
-        pairs = pairs[np.logical_and(~df_copy.iloc[pairs[:,0]].is_front.to_numpy(), ~df_copy.iloc[pairs[:,1]].is_front.to_numpy())]
-    elif enforce_same_side:
-        front_side_pairs = np.logical_and(df_copy.iloc[pairs[:,0]].is_front.to_numpy(), df_copy.iloc[pairs[:,1]].is_front.to_numpy())
-        back_side_pairs = np.logical_and(~df_copy.iloc[pairs[:,0]].is_front.to_numpy(), ~df_copy.iloc[pairs[:,1]].is_front.to_numpy())        
-        pairs = pairs[np.logical_or(front_side_pairs, back_side_pairs)]
-
-    if enforce_ref_cons:
-        pairs = pairs[np.logical_xor(df_copy.iloc[pairs[:,0]].is_ref.to_numpy(), df_copy.iloc[pairs[:,1]].is_ref.to_numpy())]
-    
-    return pairs
-    
-
-def true_rank(true_labels, logits):
-    assert true_labels.device.type=='cpu' and logits.device.type=='cpu'
-    batch_size, n_classes = logits.shape
-    ranked_predictions = torch.argsort(logits, dim=1, descending=True)
-    ranking_mask = (ranked_predictions == true_labels.reshape(batch_size,1).expand(batch_size, n_classes))
-    rank_of_true_label = torch.argwhere(ranking_mask)
-
-    unique_labels, inv_unique_labels, freq_labels = torch.unique(true_labels, return_inverse=True, return_counts=True)
-    ordered_rankings = torch.zeros((len(unique_labels), batch_size), dtype=torch.long)
-    ordered_rankings[inv_unique_labels, rank_of_true_label[:,0]] = rank_of_true_label[:,1]
-    return rank_of_true_label, (unique_labels, ordered_rankings)
-
-def MRR(true_labels, logits, per_class=False):
-    assert true_labels.device.type=='cpu' and logits.device.type=='cpu'
-    batch_size, n_classes = logits.shape
-    ranked_predictions = torch.argsort(logits, dim=1, descending=True)
-    ranking_mask = (ranked_predictions == true_labels.reshape(batch_size,1).expand(batch_size, n_classes))
-    rank_of_true_label = torch.argwhere(ranking_mask)
-    rank_of_true_label[:, 1] = rank_of_true_label[:, 1] + 1 # this is so that the first ranked element is 1 and not 0
-    reciprocal_rank = (1/(rank_of_true_label[:,1]))
-    if per_class:
-        unique_labels, inv_unique_labels, counts_labels = torch.unique(true_labels, return_inverse=True, return_counts=True)
-        ordered_reciprocal_rankings = torch.zeros((len(unique_labels), batch_size), dtype=torch.float)
-        ordered_reciprocal_rankings[inv_unique_labels, rank_of_true_label[:,0]] = reciprocal_rank
-        return (unique_labels, ordered_reciprocal_rankings.sum(dim=1)/counts_labels)
-    return reciprocal_rank.sum()/batch_size
-
-
-from sklearn.metrics import top_k_accuracy_score
-
-def get_classification_accuracy(true_labels, logits):
-    assert true_labels.device.type=='cpu' and logits.device.type=='cpu'
-    all_labels = np.arange(start=0,stop=logits.shape[1])
-    top_1_accuracy = top_k_accuracy_score(true_labels, logits, k=1, labels=all_labels)
-    top_5_accuracy = top_k_accuracy_score(true_labels, logits, k=5, labels=all_labels)
-    return top_1_accuracy, top_5_accuracy
-
-def embed_all(models_dict, dataloader, embedding_size, n_classes, device, include_logits=True, sort=False):
-    num_imgs = len(dataloader.dataset)
-    start_idx = 0
-
-    all_labels = torch.zeros(num_imgs).to(device)
-    all_embeddings = torch.zeros(num_imgs, embedding_size).to(device)
-
-    models_dict['embedding'].eval()
-
-    if include_logits:
-        models_dict['classifier'].eval()
-        all_logits = torch.zeros(num_imgs, n_classes).to(device)
-
-    with torch.set_grad_enabled(False):
-        for data in tqdm(dataloader, total=len(dataloader)):
-            imgs = data[0].to(device)
-            labels = data[1].to(device)
-            end_idx = start_idx + len(labels)
-            all_labels[start_idx:end_idx] = labels
-
-
-            embeddings =  models_dict['embedding'](imgs)
-            all_embeddings[start_idx:end_idx, :] = embeddings
-
-            if include_logits:
-                logits = models_dict['classifier'](embeddings)
-                all_logits[start_idx:end_idx, :] = logits
-
-            start_idx = end_idx
-    if sort:
-        all_labels, sorted_ind = all_labels.sort()
-        all_embeddings = all_embeddings[sorted_ind]
-        if include_logits:
-            all_logits = all_logits[sorted_ind]
-
-    if include_logits:
-        return (all_labels.type(torch.int32), all_embeddings, all_logits)
-    return (all_labels.type(torch.int32), all_embeddings)
-
-def test(model_dict, label_encoder, dataloader, embedding_size, n_classes, device):
-    all_labels, all_embeddings, all_logits  = embed_all(model_dict, dataloader, embedding_size, n_classes, device)
-    mrr_overall = MRR(all_labels.cpu(), all_logits.cpu())
-    u_labels, mrr_per_class = MRR(all_labels.cpu(), all_logits.cpu(), True)
-    top_1_acc, top_5_acc = get_classification_accuracy(all_labels.cpu(), all_logits.cpu())
-    print("Top 1 calssification accuracy: ", top_1_acc)
-    print("Top 5 calssification accuracy: ", top_5_acc)
-    print("mrr_overall = {:f}".format(mrr_overall.item()))
-    print("mrr per class: ")
-    u_labels_decoded = label_encoder.inverse_transform(u_labels.type(torch.int64))
-    for i, l in enumerate(u_labels_decoded):
-        print('{} = {:f}'.format(l, mrr_per_class[i].item()))
-
-def compare_labels(labels1, labels2):
-    assert labels1.device.type=='cpu' and labels2.device.type=='cpu'
-    return np.equal.outer(labels1.numpy(), labels2.numpy())
-
-from sklearn.metrics.pairwise import  euclidean_distances 
-
-def get_hits(labels, embeddings, ref_labels=None, ref_embeddings=None, return_distances=False, return_sorted_rankings=False, return_same_pairs=False):
-    ''' 
-    If either ref_labels or ref_embeddings is missing, then will compute hits between sambles in same batch, otherwise will compute hits between the first set of embeddings and the second set
-    If computing between two different sets of embeddings, it is assumed that there is no overlap between the samples
-    A 'hit' occurs when the corresponding labels between two embedded images match
-    Each row of hits corresponds to 1 sample in the input and each 1 in the column of that row corresponds to a 'hit' at that rank, anything that is not a 'hit' will be 0
-    '''
-    
-    assert labels.device.type=='cpu' and embeddings.device.type=='cpu'
-    outputs = []
-    if ref_labels is not None and ref_embeddings is not None:
-        assert ref_labels.device.type=='cpu' and ref_embeddings.device.type=='cpu'
-        distances = euclidean_distances(embeddings, ref_embeddings)
-        sorted_rankings = distances.argsort(axis=1)
-        same_labels = compare_labels(labels, ref_labels)
-        same_pairs = np.argwhere(same_labels)
-
+def get_datasets(partitions, ref_df, labelcol, two_sided, **kwargs):
+    datasets = {}
+    if two_sided:
+        ref_pairs = front_back_pairs(ref_df, labelcol)
+        front_ref = ref_df.iloc[ref_pairs[:,0]]
+        back_ref = ref_df.iloc[ref_pairs[:,1]]
+        for k,v in partitions.items():
+            cons_pairs = front_back_pairs(v, labelcol)
+            front = pd.concat([v.iloc[cons_pairs[:,0]], front_ref])
+            back = pd.concat([v.iloc[cons_pairs[:,1]], back_ref])
+            datasets[k] = TwoSidedPillImages(front_df=front, back_df=back, phase=k, labelcol=labelcol, **kwargs)
     else:
-        distances = euclidean_distances(embeddings, embeddings)
-        distances = distances - np.identity(len(distances)) #this is done to make sure that distances between same images are pushed to front when sorting, making them easy to exlude
-        sorted_rankings = distances.argsort(axis=1)
-        sorted_rankings = sorted_rankings[:,1:] #exclude same images
-
-        same_labels = compare_labels(labels, labels)
-        same_pairs = np.argwhere(same_labels)
-        same_pairs = same_pairs[same_pairs[:,0] != same_pairs[:,1]] #exclude same images
-
-
-    true_ranks = np.stack([same_pairs[:,0], np.argwhere(sorted_rankings[same_pairs[:,0]] == same_pairs[:,1].reshape(-1,1))[:,1]], axis=1)
-    n,m = sorted_rankings.shape
-    hits = np.zeros((n, m))
-    hits[true_ranks[:,0], true_ranks[:,1]] = 1
-    outputs.append(hits)
-    if return_distances:
-        outputs.append(distances)
-    if return_sorted_rankings:
-        outputs.append(sorted_rankings)
-    if return_same_pairs:
-        outputs.append(same_pairs)
-    return tuple(outputs)
-
-def ap_k(hits, k):
-    ''' 
-    Calculates the average precision at k
-    '''
-    n,m = hits.shape
-    assert m >= k
-
-    sum_prec_k = np.zeros(n)
-    for i in range(1,k+1):
-        sum_prec_k += ((hits[:,:i].sum(axis=1)/i)*hits[:,i-1])
-    
-    N = hits.sum(axis=1)
-
-    return sum_prec_k/np.where(N > 0, N, np.nan)
-
-def map_k(hits, k, replace_nan=None, per_class=False, labels=None):
-    ''' 
-    Calculates the mean average precision at k
-    if replace_nan is None, then will default to dropping nan values before calculating mean, otherwise will replace nans with whatever is input into replace_nan
-    if per_class is true, labels is a required argument
-    '''
-    ap = ap_k(hits, k)
-    if not per_class:
-        ap = ap[~np.isnan(ap)] if (replace_nan is None) else np.nan_to_num(ap, nan=replace_nan)
-        return np.mean(ap)
-
-    assert labels.device.type == 'cpu'
-    group_labels = np.triu(compare_labels(labels, labels))
-    if replace_nan is not None:
-        ap = np.nan_to_num(ap, nan=replace_nan)
-        return (group_labels @ ap)/group_labels.sum(axis=1)
-    else:
-        map_per_class = (group_labels @ np.nan_to_num(ap, 0.0))/group_labels.sum(axis=1)
-        return np.where(np.isnan(ap), np.nan, map_per_class)
-
-
-
-def get_top_rank(hits, shift_ranks_1=False):
-    top_ranks = np.argmax(hits, axis=1)
-    top_ranks = np.where(np.sum(hits, axis=1) == 0, np.nan, top_ranks)
-    if shift_ranks_1:
-        return top_ranks + 1
-    return top_ranks
-
-def MRR(hits, replace_nan=None, per_class=False, labels=None):
-    '''default behavior is to propogate nans when calculating per_class or exclude nans from calculations otherwise'''
-    top_ranks = get_top_rank(hits, True)
-    if per_class:
-        assert labels.device.type == 'cpu'
-        group_labels = np.triu(compare_labels(labels, labels))
-        reciprocal_ranks = group_labels @ np.where(np.isnan(top_ranks), 0.0, 1/top_ranks)
-        if replace_nan is None:
-            return np.where(np.isnan(top_ranks), np.nan, np.sum(reciprocal_ranks, axis=1)/np.sum(group_labels, axis=1))
-        else:
-            return np.where(np.isnan(top_ranks), replace_nan, np.sum(reciprocal_ranks, axis=1)/np.sum(group_labels, axis=1))
-    if replace_nan is None:
-        return np.mean((1/top_ranks[~np.isnan(top_ranks)]))
-    return np.mean(np.where(np.isnan(top_ranks), replace_nan, 1/top_ranks))
+        for k,v in partitions.items():
+            datasets[k] = PillImages(df=pd.concat([v, ref_df]), phase=k, labelcol=labelcol, **kwargs)
+    return datasets
